@@ -13,3 +13,15 @@
 ### Fixed
 - Bug where clicking a Note Mention chip in the canvas panel would fail to open the note due to a state collision with Excalidraw's `onChange` event handler overriding the panel state.
 - Silent UI failures when attempting to load a deleted or non-existent Appwrite note (404); now displays a prominent "Note tidak ditemukan" error message.
+
+## [Unreleased] - 2026-09-21
+### Added
+- Added soft-delete mechanism (`status: "trashed"`) for Appwrite notes to prevent accidental permanent deletion.
+- Added `/admin/trash` dashboard page for reviewing and restoring deleted notes.
+- Added a Trash icon to the canvas right side panel to trigger note deletion.
+- Implemented automatic canvas cleanup: Soft-deleting a note now cleanly erases all associated `embeddable` note cards and trims the mention string from any inline texts across the canvas in real time.
+
+### Fixed
+- Fixed bug where status banner in the canvas side panel failed to display upon reopening a trashed note (due to missing `status` parameter during state reconstruction).
+- Resolved Excalidraw text dimension desync bug during programmatic string replacement by routing modifications through `restoreElements(..., { refreshDimensions: true })`, ensuring bounding box integrity.
+- Ensured programmatic canvas deletions triggered by Appwrite trash actions are safely logged into Excalidraw's local history stack (Cmd+Z undoable) using `CaptureUpdateAction.IMMEDIATELY`.

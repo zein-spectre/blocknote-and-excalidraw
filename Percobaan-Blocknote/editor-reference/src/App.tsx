@@ -3,6 +3,7 @@ import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditorPage } from "./pages/AdminEditorPage";
 import { PublicReader } from "./pages/PublicReader";
 import { CanvasPrototypePage } from "./pages/CanvasPrototypePage";
+import { CanvasViewPage } from "./pages/CanvasViewPage";
 import { AdminTrash } from "./pages/AdminTrash";
 
 function App() {
@@ -27,7 +28,9 @@ function App() {
             <Route path="/admin/edit/:id" element={<AdminEditorPage />} />
             <Route path="/admin/trash" element={<AdminTrash />} />
             <Route path="/article/:id" element={<PublicReader />} />
-            <Route path="/canvas" element={<CanvasPrototypePage />} />
+            <Route path="/canvas" element={<Navigate to="/admin" replace />} />
+            <Route path="/canvas/:id" element={<CanvasPrototypePage />} />
+            <Route path="/view/canvas/:id" element={<CanvasViewPage />} />
           </Routes>
         </main>
       </div>

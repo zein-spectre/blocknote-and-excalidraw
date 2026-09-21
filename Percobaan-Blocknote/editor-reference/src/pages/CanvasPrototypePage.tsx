@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useParams, Link } from "react-router-dom";
 import { Excalidraw, mutateElement, restoreElements, CaptureUpdateAction } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { Editor } from "../components/Editor";
@@ -12,6 +13,7 @@ const ENABLE_CANVAS_SLASH_MENU = false;
 const ENABLE_REMOVE_MENTION_TEXT = true;
 
 export function CanvasPrototypePage() {
+    const { id: routeId } = useParams<{ id: string }>();
     const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
     const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
 
@@ -24,14 +26,18 @@ export function CanvasPrototypePage() {
     // State for Canvas Scene
     const [canvasLoading, setCanvasLoading] = useState(true);
     const [canvasId, setCanvasId] = useState<string | null>(null);
+    const [canvasTitle, setCanvasTitle] = useState<string>("");
+    const [canvasStatus, setCanvasStatus] = useState<string>("");
     const [canvasInitialElements, setCanvasInitialElements] = useState<any[]>([]);
     const [canvasSaveStatus, setCanvasSaveStatus] = useState<string>("");
+    const [canvasError, setCanvasError] = useState<string | null>(null);
 
     const latestDataRef = useRef<{ title: string; content: string }>({ title: "", content: "" });
     const debounceSaveRef = useRef<any>(null);
     const lastExcalidrawSelectedIdRef = useRef<string | null>(null);
 
     const debounceCanvasSaveRef = useRef<any>(null);
+    const debounceCanvasTitleSaveRef = useRef<any>(null);
     const lastSavedSceneRef = useRef<string>("");
 
     // Data disimpan di memori
@@ -375,69 +381,70 @@ export function CanvasPrototypePage() {
             }
         }, 100);
         return () => clearInterval(interval);
-    }, [excalidrawAPI, mentionMenuOpen]);
-
-    useEffect(() => {
+    }, [excalidrawAPI, mentionMenuOpen]);    useEffect(() => {
         const loadCanvas = async () => {
+            if (!routeId) return;
             try {
-                const res = await databases.listDocuments(
+                const doc = await databases.getDocument(
                     APPWRITE_CONFIG.databaseId,
                     "canvases",
-                    []
+                    routeId
                 );
-                if (res.documents.length > 0) {
-                    const doc = res.documents[0];
-                    setCanvasId(doc.$id);
-                    try {
-                        const sceneData = JSON.parse(doc.scene || "[]");
-                        setCanvasInitialElements(sceneData);
-                        lastSavedSceneRef.current = JSON.stringify(sceneData);
+                
+                if (doc.status === "trashed") {
+                    setCanvasError("Kanvas ini ada di Tong Sampah");
+                    setCanvasLoading(false);
+                    return;
+                }
 
-                        const appwriteNoteIds = sceneData
-                            .filter((el: any) => el.type === "embeddable" && el.link && el.link.startsWith("note://") && !el.link.startsWith("note://embed-"))
-                            .map((el: any) => el.link.replace("note://", ""));
+                setCanvasId(doc.$id);
+                setCanvasTitle(doc.title || "(Tanpa judul)");
+                setCanvasStatus(doc.status || "draft");
+                
+                try {
+                    const sceneData = JSON.parse(doc.scene || "[]");
+                    setCanvasInitialElements(sceneData);
+                    lastSavedSceneRef.current = JSON.stringify(sceneData);
 
-                        const uniqueIds = Array.from(new Set(appwriteNoteIds)) as string[];
+                    const appwriteNoteIds = sceneData
+                        .filter((el: any) => el.type === "embeddable" && el.link && el.link.startsWith("note://") && !el.link.startsWith("note://embed-"))
+                        .map((el: any) => el.link.replace("note://", ""));
 
-                        if (uniqueIds.length > 0) {
-                            try {
-                                const titlesRes = await databases.listDocuments(
-                                    APPWRITE_CONFIG.databaseId,
-                                    APPWRITE_CONFIG.collectionId,
-                                    [Query.equal("$id", uniqueIds)]
-                                );
-                                const titlesMapping: Record<string, string> = {};
-                                titlesRes.documents.forEach(d => {
-                                    titlesMapping[d.$id] = d.title;
-                                });
-                                setAppwriteTitles(titlesMapping);
-                            } catch (e) {
-                                console.error("Failed to fetch appwrite titles for canvas", e);
-                            }
+                    const uniqueIds = Array.from(new Set(appwriteNoteIds)) as string[];
+
+                    if (uniqueIds.length > 0) {
+                        try {
+                            const titlesRes = await databases.listDocuments(
+                                APPWRITE_CONFIG.databaseId,
+                                APPWRITE_CONFIG.collectionId,
+                                [Query.equal("$id", uniqueIds)]
+                            );
+                            const titlesMapping: Record<string, string> = {};
+                            titlesRes.documents.forEach(d => {
+                                titlesMapping[d.$id] = d.title;
+                            });
+                            setAppwriteTitles(titlesMapping);
+                        } catch (e) {
+                            console.error("Failed to fetch appwrite titles for canvas", e);
                         }
-                    } catch (e) {
-                        setCanvasInitialElements([]);
-                        lastSavedSceneRef.current = "[]";
                     }
-                } else {
-                    const newDoc = await databases.createDocument(
-                        APPWRITE_CONFIG.databaseId,
-                        "canvases",
-                        ID.unique(),
-                        { title: "Kanvas Utama", scene: "[]" }
-                    );
-                    setCanvasId(newDoc.$id);
+                } catch (e) {
                     setCanvasInitialElements([]);
                     lastSavedSceneRef.current = "[]";
                 }
-            } catch (err) {
+            } catch (err: any) {
                 console.error("Failed to load canvas:", err);
+                if (err.code === 404) {
+                    setCanvasError("Kanvas tidak ditemukan");
+                } else {
+                    setCanvasError("Gagal memuat kanvas");
+                }
             } finally {
                 setCanvasLoading(false);
             }
         };
         loadCanvas();
-    }, []);
+    }, [routeId]);
 
 
 
@@ -596,6 +603,81 @@ export function CanvasPrototypePage() {
                 setCanvasSaveStatus("Kanvas: gagal menyimpan");
             }
         }, 1500);
+    };
+
+    const handleCanvasTitleChange = (newTitle: string) => {
+        setCanvasTitle(newTitle);
+        setCanvasSaveStatus("Menyimpan judul...");
+        if (debounceCanvasTitleSaveRef.current) clearTimeout(debounceCanvasTitleSaveRef.current);
+        debounceCanvasTitleSaveRef.current = setTimeout(async () => {
+            if (!canvasId) return;
+            try {
+                await databases.updateDocument(
+                    APPWRITE_CONFIG.databaseId,
+                    "canvases",
+                    canvasId,
+                    { title: newTitle }
+                );
+                setCanvasSaveStatus("Judul tersimpan");
+                setTimeout(() => setCanvasSaveStatus(prev => prev === "Judul tersimpan" ? "" : prev), 2000);
+            } catch (err) {
+                console.error("Failed to save canvas title:", err);
+                setCanvasSaveStatus("Gagal menyimpan judul");
+            }
+        }, 800);
+    };
+
+    const handleTogglePublish = async () => {
+        if (!canvasId) return;
+        const newStatus = canvasStatus === "published" ? "draft" : "published";
+        const oldStatus = canvasStatus;
+        setCanvasStatus(newStatus);
+        setCanvasSaveStatus(newStatus === "published" ? "Memublikasikan..." : "Membatalkan publikasi...");
+        try {
+            await databases.updateDocument(
+                APPWRITE_CONFIG.databaseId,
+                "canvases",
+                canvasId,
+                { status: newStatus }
+            );
+            setCanvasSaveStatus(newStatus === "published" ? "Berhasil dipublikasikan" : "Batal dipublikasikan");
+            setTimeout(() => setCanvasSaveStatus(prev => prev.startsWith("Berhasil") || prev.startsWith("Batal") ? "" : prev), 2000);
+        } catch (err) {
+            console.error("Gagal mengubah status publikasi kanvas:", err);
+            setCanvasSaveStatus("Gagal mengubah status");
+            setCanvasStatus(oldStatus);
+            setTimeout(() => setCanvasSaveStatus(prev => prev === "Gagal mengubah status" ? "" : prev), 2000);
+        }
+    };
+
+    const handlePreview = () => {
+        if (!canvasId || !excalidrawAPI) return;
+        
+        if (debounceCanvasSaveRef.current) {
+            clearTimeout(debounceCanvasSaveRef.current);
+            debounceCanvasSaveRef.current = null;
+        }
+
+        const elements = excalidrawAPI.getSceneElements();
+        const activeElements = elements.filter((el: any) => !el.isDeleted);
+        const currentSceneString = JSON.stringify(activeElements);
+        lastSavedSceneRef.current = currentSceneString;
+
+        setCanvasSaveStatus("Menyimpan sebelum preview...");
+        
+        databases.updateDocument(
+            APPWRITE_CONFIG.databaseId,
+            "canvases",
+            canvasId,
+            { scene: currentSceneString }
+        ).then(() => {
+            setCanvasSaveStatus("Tersimpan");
+            setTimeout(() => setCanvasSaveStatus(prev => prev === "Tersimpan" ? "" : prev), 2000);
+            window.open(`/view/canvas/${canvasId}`, "_blank");
+        }).catch((err) => {
+            console.error("Gagal menyimpan sebelum preview:", err);
+            setCanvasSaveStatus("Gagal menyimpan");
+        });
     };
 
     const handleOpenAppwriteNote = (id: string) => {
@@ -884,9 +966,62 @@ export function CanvasPrototypePage() {
         return el.customData?.mentions ?? [];
     };
 
+    if (canvasError) {
+        return (
+            <div className="flex flex-col items-center justify-center h-[calc(100vh-140px)] text-gray-600">
+                <h2 className="text-2xl font-bold mb-4">{canvasError}</h2>
+                {canvasError === "Kanvas ini ada di Tong Sampah" ? (
+                    <Link to="/admin/trash" className="text-blue-600 hover:underline">← Ke Tong Sampah</Link>
+                ) : (
+                    <Link to="/admin" className="text-blue-600 hover:underline">← Dashboard</Link>
+                )}
+            </div>
+        );
+    }
+
     console.log("[DIAG] 7 : render panel kanan, appwriteNoteId:", appwriteNoteId, "selectedNoteId:", selectedNoteId, "cabang:", appwriteNoteId ? "Appwrite" : (selectedNoteId ? "Welcome Note" : "None"));
     return (
-        <div style={{ display: "flex", width: "100%", height: "calc(100vh - 80px)", overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 80px)", overflow: "hidden", marginTop: "-24px" }}>
+            <div style={{ height: "40px", flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", gap: "16px" }}>
+                <Link to="/admin" className="text-gray-500 hover:text-gray-900 font-medium text-sm flex items-center gap-1 shrink-0">
+                    ← Dashboard
+                </Link>
+                <div className="flex-1 flex items-center gap-4">
+                    <input 
+                        type="text" 
+                        value={canvasTitle} 
+                        onChange={(e) => handleCanvasTitleChange(e.target.value)} 
+                        className="border-none focus:outline-none focus:ring-0 font-semibold text-gray-800 bg-transparent min-w-[200px]"
+                        placeholder="Judul Kanvas..."
+                    />
+                    <span className={`px-2 py-0.5 text-xs font-semibold rounded-md ${
+                        canvasStatus === 'published' 
+                            ? 'bg-green-100 text-green-700' 
+                            : 'bg-yellow-100 text-yellow-700'
+                    }`}>
+                        {(canvasStatus || "draft").toUpperCase()}
+                    </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    <button 
+                        onClick={handleTogglePublish}
+                        className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
+                            canvasStatus === "published"
+                                ? "bg-amber-100 text-amber-700 hover:bg-amber-200"
+                                : "bg-green-600 text-white hover:bg-green-700"
+                        }`}
+                    >
+                        {canvasStatus === "published" ? "Unpublish" : "Publish"}
+                    </button>
+                    <button 
+                        onClick={handlePreview}
+                        className="px-3 py-1.5 text-sm font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg transition flex items-center gap-1"
+                    >
+                        Preview
+                    </button>
+                </div>
+            </div>
+            <div style={{ display: "flex", flex: 1, width: "100%", overflow: "hidden" }}>
             {/* Canvas Area */}
             <div style={{ flex: (selectedNoteId || appwriteNoteId) ? "1 1 55%" : "1 1 100%", position: "relative", transition: "all 0.3s ease", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}>
                 {canvasSaveStatus && (
@@ -1194,6 +1329,7 @@ export function CanvasPrototypePage() {
                     }}
                 />
             )}
+        </div>
         </div>
     );
 }

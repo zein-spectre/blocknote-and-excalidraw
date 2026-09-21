@@ -23,3 +23,9 @@
 **Context:** Each Excalidraw box needs to render the title of its linked Appwrite document. Fetching them individually on load causes N+1 queries.
 **Decision:** Extract all unique `note://` IDs from the loaded scene and execute a single `databases.listDocuments` request using `Query.equal("$id", [...])`.
 **Rationale:** Appwrite supports querying by arrays natively. This reduces initial load time and network overhead from O(N) to O(1) regarding database requests.
+
+## 5. Safe Deletion of Excalidraw Text Mentions
+**Date:** 2026-09-21
+**Context:** When a note is soft-deleted, any inline text mentions in the canvas pointing to it must be erased. Simply replacing the `text` string via raw DOM manipulation or `mutateElement` destroys Excalidraw's hit-detection bounding box, causing invisible selection bugs.
+**Decision:** We modify the `originalText` string back-to-front and then pass the modified text element back through the core API `restoreElements([el], null, { refreshDimensions: true })`.
+**Rationale:** This utilizes Excalidraw's native dimension-calculation engine to cleanly re-wrap lines and recalculate `width` and `height`, completely avoiding flaky DOM `textarea` simulations or illegal raw object modifications.

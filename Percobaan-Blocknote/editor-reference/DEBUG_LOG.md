@@ -62,3 +62,31 @@ When dealing with external/third-party complex stateful components (like Excalid
 - Always sanitize and serialize complex third-party state before doing equality checks for auto-saves (e.g., stripping out selections/deleted items).
 - Use bulk database queries for populating scattered UI elements (like titles on canvas nodes) to prevent N+1 performance bottlenecks.
 - Graceful degradation: always anticipate 404s when dealing with linked relational data in canvases.
+
+## Issue: Lingering mentions and cards on canvas when note is moved to trash
+**Date:** 2026-09-21
+
+### Confirmed Root Cause
+Excalidraw canvas does not automatically subscribe to Appwrite database deletions. When a note is moved to trash via the right side panel, its visual representations on the canvas (embeddable cards and inline mention text) remained untouched because there was no programmatic logic implemented to proactively seek them out and scrub them from the scene.
+
+### Final Fix
+1. **Cards (Embeddables):** Mutated the corresponding `embeddable` elements to `isDeleted: true` directly.
+2. **Text Mentions:** Intercepted the text elements, string-replaced the mention title in `originalText` (searching from back-to-front to preserve indices), and stripped the `noteId` from `customData.mentions`.
+3. **Dimension Calculation:** Passed the modified text elements through Excalidraw's `restoreElements(..., { refreshDimensions: true })` API to recalculate line wrapping, width, and height cleanly. Empty texts are marked `isDeleted: true` without removing their parent shapes.
+4. **History Stack:** Executed `updateScene` utilizing `captureUpdate: CaptureUpdateAction.IMMEDIATELY` to push the automated deletion into the user's Undo history (Cmd+Z).
+
+### Why the Fix Works
+Using `restoreElements` leverages Excalidraw's internal native dimension-measuring engine, ensuring that bounding boxes and hit detection remain perfectly calibrated to the new trimmed text string. `CaptureUpdateAction.IMMEDIATELY` forces Excalidraw to register the programmatic change as a standard user action, enabling robust Undo/Redo capabilities for the automated canvas cleanup.
+
+### Verification Performed
+- Moved a note to the trash via the Trash2 icon in the side panel.
+- Verified via `[DIAG-U]` that the old text successfully lost the mention string, that `width` and `height` updated appropriately, and that `containerId` ties to shapes were properly maintained.
+- Confirmed that empty texts are correctly hidden (`isDeleted: true`) while their parent bound shapes are kept intact.
+
+### Tests/Checks Passed
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: Success (~4.47s)
+
+### Important Lessons for Future Similar Problems
+- **Never manipulate Excalidraw text element dimensions manually** by mutating `width` or `height` values, as this corrupts Excalidraw's hit detection and bounding box engine. 
+- Always rely on official API functions like `convertToExcalidrawElements` or `restoreElements` with `refreshDimensions: true` to let the Excalidraw engine calculate text measurements automatically when changing strings via code.

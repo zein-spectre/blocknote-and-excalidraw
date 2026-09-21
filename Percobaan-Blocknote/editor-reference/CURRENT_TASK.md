@@ -1,15 +1,15 @@
-# Current Task: Full Appwrite Canvas Integration and Note Linking
+# Current Task: Soft Delete & Canvas Mention Removal
 
 **STATUS: COMPLETED**
 
 ## Objective
-Implement saving/loading the entire Excalidraw scene to an Appwrite `canvases` collection, and ensure every new BlockNote box created in the canvas corresponds to a real document in the Appwrite `articles` collection, with synchronized titles and robust error handling.
+Implement a soft delete mechanism for Appwrite notes (status: "trashed"), provide a Trash management page for admins, and automatically clean up the Excalidraw canvas by removing deleted note cards and erasing mention texts cleanly without corrupting Excalidraw's hit detection or rendering.
 
 ## Subtasks
-- [x] Load Excalidraw scene from `canvases` collection on mount (create default if empty).
-- [x] Auto-save canvas (1.5s debounce) only when non-deleted elements actually change (ignoring selection).
-- [x] Create an Appwrite document (status: "draft") before inserting a new canvas box, and link it via `note://<id>`.
-- [x] Modify Excalidraw `handleChange` to route `note://` links to the Appwrite right-panel.
-- [x] Fetch Appwrite titles in bulk using `Query.equal` to display on the canvas boxes.
-- [x] Synchronize title edits in the panel immediately back to the canvas mapping.
-- [x] Gracefully handle 404s (e.g. "Note tidak ditemukan") without crashing.
+- [x] Create a soft delete filter across all components querying the `articles` collection to exclude `trashed` notes.
+- [x] Create an `/admin/trash` dashboard page for viewing and restoring deleted notes.
+- [x] Add a Trash icon to the right panel header in the canvas to trigger `moveToTrash`.
+- [x] On note deletion, remove the associated `embeddable` card from the canvas by setting `isDeleted = true`.
+- [x] On note deletion, safely string-replace the mention title from any text elements pointing to it.
+- [x] Utilize Excalidraw's `restoreElements` with `refreshDimensions: true` to recalculate text dimensions accurately.
+- [x] Push canvas modifications to the undo history using `CaptureUpdateAction.IMMEDIATELY`.

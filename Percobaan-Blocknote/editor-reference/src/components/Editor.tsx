@@ -25,7 +25,9 @@ const NoteMention = createReactInlineContentSpec(
       return (
           <span 
               style={{ backgroundColor: "#e2e8f0", padding: "2px 6px", borderRadius: "12px", cursor: "pointer", color: "#1e293b", fontWeight: 500 }}
-              onClick={() => {
+              onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   console.log("[DIAG] 1 : di onClick chip noteMention. noteId:", props.inlineContent.props.noteId, "title:", props.inlineContent.props.title, "typeof onOpenNote:", typeof onOpenNote);
                   if (onOpenNote) {
                       onOpenNote(props.inlineContent.props.noteId);
