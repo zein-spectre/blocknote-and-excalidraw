@@ -50,7 +50,10 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
             try {
                 // Mention mode: limit 50, otherwise limit 10
                 const limit = mode === "mention" ? 50 : 10;
-                const queries = [Query.limit(limit)];
+                const queries = [
+                    Query.limit(limit),
+                    Query.notEqual("status", "trashed")
+                ];
                 
                 if (query.trim()) {
                     queries.push(Query.search("title", query));

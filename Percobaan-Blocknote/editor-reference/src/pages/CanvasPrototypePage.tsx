@@ -1,13 +1,15 @@
 import { useState, useRef, useEffect } from "react";
-import { Excalidraw } from "@excalidraw/excalidraw";
+import { Excalidraw, mutateElement, restoreElements, CaptureUpdateAction } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 import { Editor } from "../components/Editor";
 import { SlashMenu } from "../components/SlashMenu";
 import { databases, APPWRITE_CONFIG, ID } from "../lib/appwrite";
 import { Query } from "appwrite";
+import { Trash2 } from "lucide-react";
 import blocknoteIcon from "../assets/ikon-blocknote.png";
 
 const ENABLE_CANVAS_SLASH_MENU = false;
+const ENABLE_REMOVE_MENTION_TEXT = true;
 
 export function CanvasPrototypePage() {
     const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
@@ -15,7 +17,7 @@ export function CanvasPrototypePage() {
 
     // State for Appwrite Note
     const [appwriteNoteId, setAppwriteNoteId] = useState<string | null>(null);
-    const [appwriteNoteData, setAppwriteNoteData] = useState<{ title: string; content: string } | null>(null);
+    const [appwriteNoteData, setAppwriteNoteData] = useState<{ title: string; content: string; status?: string } | null>(null);
     const [appwriteLoading, setAppwriteLoading] = useState(false);
     const [saveStatus, setSaveStatus] = useState<string>("");
 
@@ -609,7 +611,9 @@ export function CanvasPrototypePage() {
         databases.getDocument(APPWRITE_CONFIG.databaseId, APPWRITE_CONFIG.collectionId, id)
             .then(doc => {
                 console.log("[DIAG] 4 : getDocument berhasil, doc.$id:", doc.$id, "content length:", doc.content?.length);
-                const data = { title: doc.title, content: doc.content };
+                console.log("[DIAG-T] handleOpenAppwriteNote -> doc.$id:", doc.$id, "doc.status dari server:", doc.status);
+                const data = { title: doc.title, content: doc.content, status: doc.status };
+                console.log("[DIAG-T] handleOpenAppwriteNote -> Nilai status yang dimasukkan ke appwriteNoteData:", data.status);
                 setAppwriteNoteData(data);
                 latestDataRef.current = data;
                 setAppwriteLoading(false);
@@ -644,6 +648,135 @@ export function CanvasPrototypePage() {
                 setSaveStatus("Gagal menyimpan");
             }
         }, 800);
+    };
+
+    const moveToTrash = async () => {
+        if (!appwriteNoteId) return;
+        
+        // Flush pending save first
+        if (debounceSaveRef.current) {
+            clearTimeout(debounceSaveRef.current);
+            debounceSaveRef.current = null;
+            try {
+                await databases.updateDocument(
+                    APPWRITE_CONFIG.databaseId,
+                    APPWRITE_CONFIG.collectionId,
+                    appwriteNoteId,
+                    { title: latestDataRef.current.title, content: latestDataRef.current.content }
+                );
+            } catch (err) {
+                console.error("Flush save error before trash:", err);
+            }
+        }
+        
+        try {
+            setSaveStatus("Menghapus...");
+            const res = await databases.updateDocument(
+                APPWRITE_CONFIG.databaseId,
+                APPWRITE_CONFIG.collectionId,
+                appwriteNoteId,
+                { status: "trashed" }
+            );
+            console.log("[DIAG-T] moveToTrash -> hasil updateDocument status:", res.status);
+            setAppwriteNoteData(prev => prev ? { ...prev, status: "trashed" } : prev);
+            setSaveStatus("Dihapus");
+            
+            // Hapus card (tandai isDeleted) di kanvas
+            if (excalidrawAPI) {
+                const elements = excalidrawAPI.getSceneElements();
+                let hasChanges = false;
+                const newElements = elements.map((el: any) => {
+                    // 1. Tangani card note:// 
+                    if (el.type === "embeddable" && el.link === `note://${appwriteNoteId}`) {
+                        hasChanges = true;
+                        // Mutasi element menggunakan API resmi Excalidraw untuk mengupdate version dan versionNonce
+                        mutateElement(el, { isDeleted: true });
+                        return el;
+                    }
+                    
+                    // 2. Tangani teks mention
+                    if (ENABLE_REMOVE_MENTION_TEXT && el.type === "text" && el.customData?.mentions?.length > 0) {
+                        const mentionsToRemove = el.customData.mentions.filter((m: any) => m.noteId === appwriteNoteId);
+                        if (mentionsToRemove.length > 0) {
+                            let updatedEl = { ...el };
+                            let textContent = updatedEl.originalText || updatedEl.text;
+                            
+                            for (const mention of mentionsToRemove) {
+                                let searchIndex = textContent.length;
+                                while (true) {
+                                    const idx = textContent.lastIndexOf(mention.title, searchIndex);
+                                    if (idx === -1) break;
+                                    
+                                    let before = textContent.substring(0, idx);
+                                    let after = textContent.substring(idx + mention.title.length);
+                                    
+                                    // Buang satu spasi agar tidak ganda
+                                    if (before.endsWith(' ') && after.startsWith(' ')) {
+                                        after = after.substring(1);
+                                    } else if (before.endsWith(' ')) {
+                                        before = before.substring(0, before.length - 1);
+                                    } else if (after.startsWith(' ')) {
+                                        after = after.substring(1);
+                                    }
+                                    
+                                    textContent = before + after;
+                                    searchIndex = idx - 1;
+                                    if (searchIndex < 0) break;
+                                }
+                            }
+                            
+                            updatedEl.originalText = textContent;
+                            updatedEl.text = textContent;
+                            
+                            updatedEl.customData = {
+                                ...updatedEl.customData,
+                                mentions: updatedEl.customData.mentions.filter((m: any) => m.noteId !== appwriteNoteId)
+                            };
+                            
+                            // Hitung ulang width, height, dan pembungkus baris lewat jalur resmi
+                            updatedEl = restoreElements([updatedEl], null, { refreshDimensions: true })[0];
+                            
+                            // Verifikasi struktur setelah dihitung ulang
+                            if (updatedEl.id !== el.id || updatedEl.fontFamily !== el.fontFamily || updatedEl.fontSize !== el.fontSize || updatedEl.containerId !== el.containerId) {
+                                console.error("[DIAG-U] Verifikasi gagal, element berubah struktur:", updatedEl);
+                                return el;
+                            }
+                            if (updatedEl.containerId) {
+                                const container = elements.find((c: any) => c.id === updatedEl.containerId);
+                                if (!container || !container.boundElements?.find((b: any) => b.id === updatedEl.id)) {
+                                    console.error("[DIAG-U] Verifikasi kontainer gagal, boundElements hilang:", updatedEl);
+                                    return el;
+                                }
+                            }
+                            
+                            console.log(`[DIAG-U] Element ${el.id}: text sebelum = "${el.text}", sesudah = "${updatedEl.text}", width = ${el.width} -> ${updatedEl.width}, height = ${el.height} -> ${updatedEl.height}`);
+                            
+                            // Kalau teks jadi kosong
+                            if (updatedEl.text.trim() === "") {
+                                updatedEl.isDeleted = true;
+                                console.log(`[DIAG-U] Teks menjadi kosong, ditandai isDeleted=true. containerId = ${updatedEl.containerId}. Bentuknya akan tetap utuh.`);
+                            }
+                            
+                            hasChanges = true;
+                            return updatedEl;
+                        }
+                    }
+                    return el;
+                });
+                
+                if (hasChanges) {
+                    excalidrawAPI.updateScene({ 
+                        elements: newElements, 
+                        captureUpdate: CaptureUpdateAction.IMMEDIATELY 
+                    });
+                }
+            }
+
+            setTimeout(() => setSaveStatus(prev => prev === "Dihapus" ? "" : prev), 2000);
+        } catch (error) {
+            console.error("Gagal memindahkan note ke tong sampah:", error);
+            setSaveStatus("Gagal menghapus");
+        }
     };
 
     const closePanel = () => {
@@ -860,6 +993,15 @@ export function CanvasPrototypePage() {
                                         />
                                         <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                                             <span style={{ fontSize: "0.875rem", color: "#64748b", whiteSpace: "nowrap" }}>{saveStatus}</span>
+                                            {appwriteNoteData?.status !== "trashed" && (
+                                                <button 
+                                                    onClick={moveToTrash}
+                                                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "#ef4444", padding: "4px 8px", display: "flex", alignItems: "center" }}
+                                                    title="Pindahkan ke Tong Sampah"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            )}
                                             <button 
                                                 onClick={closePanel}
                                                 style={{ background: "transparent", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#64748b", padding: "4px 8px" }}
@@ -871,6 +1013,29 @@ export function CanvasPrototypePage() {
                                     </>
                                 )}
                             </div>
+                            {appwriteNoteData?.status === "trashed" && (
+                                <div style={{ background: "#fef3c7", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #fde68a" }}>
+                                    <span style={{ color: "#b45309", fontWeight: 500 }}>Note ini ada di Tong Sampah</span>
+                                    <button 
+                                        onClick={async () => {
+                                            try {
+                                                await databases.updateDocument(
+                                                    APPWRITE_CONFIG.databaseId,
+                                                    APPWRITE_CONFIG.collectionId,
+                                                    appwriteNoteId,
+                                                    { status: "draft" }
+                                                );
+                                                setAppwriteNoteData(prev => prev ? { ...prev, status: "draft" } : prev);
+                                            } catch (error) {
+                                                console.error("Gagal memulihkan note:", error);
+                                            }
+                                        }}
+                                        style={{ background: "#b45309", color: "white", border: "none", padding: "4px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "0.875rem", fontWeight: 500 }}
+                                    >
+                                        Pulihkan
+                                    </button>
+                                </div>
+                            )}
                             <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
                                 {appwriteLoading ? (
                                     <div style={{ color: "#64748b" }}>Memuat konten...</div>
@@ -880,7 +1045,10 @@ export function CanvasPrototypePage() {
                                     <Editor
                                         key={`appwrite-${appwriteNoteId}`}
                                         initialContent={appwriteNoteData?.content || ""}
-                                        onChange={(json) => handleAppwriteContentChange(json)}
+                                        onChange={(json) => {
+                                            if (appwriteNoteData?.status === "trashed") return;
+                                            handleAppwriteContentChange(json);
+                                        }}
                                         enableMentions={true}
                                         onOpenNote={handleOpenAppwriteNote}
                                     />

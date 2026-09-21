@@ -40,7 +40,7 @@ export function NoteMentionMenu({ textarea, editingElementId, onNoteSelected, on
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(async () => {
             try {
-                const queries = [Query.limit(10), Query.orderDesc("$createdAt")];
+                const queries = [Query.limit(10), Query.orderDesc("$createdAt"), Query.notEqual("status", "trashed")];
                 if (query.trim()) {
                     queries.push(Query.search("title", query));
                 }

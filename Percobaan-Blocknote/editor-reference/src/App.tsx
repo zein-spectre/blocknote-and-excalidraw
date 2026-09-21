@@ -3,6 +3,7 @@ import { AdminDashboard } from "./pages/AdminDashboard";
 import { AdminEditorPage } from "./pages/AdminEditorPage";
 import { PublicReader } from "./pages/PublicReader";
 import { CanvasPrototypePage } from "./pages/CanvasPrototypePage";
+import { AdminTrash } from "./pages/AdminTrash";
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             <Route path="/" element={<Navigate to="/admin" replace />} />
             <Route path="/admin" element={<AdminDashboard />} />
             <Route path="/admin/edit/:id" element={<AdminEditorPage />} />
+            <Route path="/admin/trash" element={<AdminTrash />} />
             <Route path="/article/:id" element={<PublicReader />} />
             <Route path="/canvas" element={<CanvasPrototypePage />} />
           </Routes>

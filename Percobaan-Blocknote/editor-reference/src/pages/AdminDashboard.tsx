@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { databases, APPWRITE_CONFIG } from "../lib/appwrite";
-import { Plus, Edit, Eye, Trash2 } from "lucide-react";
+import { Plus, Edit, Eye, Trash2, ArchiveRestore } from "lucide-react";
+import { Query } from "appwrite";
 
 export function AdminDashboard() {
     const [articles, setArticles] = useState<any[]>([]);
@@ -11,7 +12,8 @@ export function AdminDashboard() {
         try {
             const response = await databases.listDocuments(
                 APPWRITE_CONFIG.databaseId,
-                APPWRITE_CONFIG.collectionId
+                APPWRITE_CONFIG.collectionId,
+                [Query.notEqual("status", "trashed")]
             );
             setArticles(response.documents);
         } catch (error) {
@@ -26,16 +28,17 @@ export function AdminDashboard() {
     }, []);
 
     const deleteArticle = async (id: string) => {
-        if (!window.confirm("Are you sure you want to delete this article?")) return;
+        if (!window.confirm("Are you sure you want to move this article to trash?")) return;
         try {
-            await databases.deleteDocument(
+            await databases.updateDocument(
                 APPWRITE_CONFIG.databaseId,
                 APPWRITE_CONFIG.collectionId,
-                id
+                id,
+                { status: "trashed" }
             );
             fetchArticles();
         } catch (error) {
-            console.error("Failed to delete article:", error);
+            console.error("Failed to move article to trash:", error);
         }
     };
 
@@ -45,13 +48,22 @@ export function AdminDashboard() {
         <div className="max-w-5xl mx-auto p-6">
             <div className="flex justify-between items-center mb-8">
                 <h1 className="text-3xl font-bold text-gray-900">Admin Dashboard</h1>
-                <Link 
-                    to="/admin/edit/new" 
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-                >
-                    <Plus size={20} />
-                    New Article
-                </Link>
+                <div className="flex gap-4">
+                    <Link 
+                        to="/admin/trash" 
+                        className="flex items-center gap-2 bg-gray-100 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-200 transition"
+                    >
+                        <ArchiveRestore size={20} />
+                        Tong Sampah
+                    </Link>
+                    <Link 
+                        to="/admin/edit/new" 
+                        className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+                    >
+                        <Plus size={20} />
+                        New Article
+                    </Link>
+                </div>
             </div>
 
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
