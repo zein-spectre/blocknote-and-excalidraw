@@ -117,3 +117,61 @@ Temporarily disabling `pointer-events` on the Excalidraw wrapper prevents its in
 
 ### Important Lessons for Future Similar Problems
 When building drag-to-resize layouts adjacent to complex canvas applications (like Excalidraw, Figma-clones, or WebGL), you must temporarily disable pointer events on the canvas layer during the drag action. Otherwise, the canvas will capture the pointer, resulting in stuttering, lost drag context, or unintended geometry modifications on the canvas itself.
+
+---
+
+## Issue: Gambar Upload di Kanvas Excalidraw Muncul Kotak Abu-abu
+**Date:** 2026-09-21
+
+### Confirmed Root Cause
+Excalidraw menyimpan data gambar (base64 `dataURL`) di `BinaryFiles` — object `Record<elementId, BinaryFileData>` — yang hanya hidup di **in-memory state** dan tidak pernah ditulis ke atau dibaca dari kolom `scene` di Appwrite. Scene hanya menyimpan `{ elements }` dalam format lama (array JSON) atau `{ elements, files }` dalam format baru, tetapi:
+1. File `BinaryFiles` yang dihasilkan saat upload gambar tidak pernah diserialisasi dan disimpan ke kolom `scene`.
+2. Saat kanvas dimuat, `initialData.files` selalu `{}` kosong, sehingga Excalidraw tidak memiliki data gambar.
+3. `useMemo` dengan `[]` dependency di `CanvasPrototypePage` membuat `initialData` berisi `{}` sebelum data Appwrite selesai dimuat — Excalidraw di-*mount* dengan scene kosong.
+
+Selain itu:
+- `handlePreview` (`CanvasViewPage`) menulis ulang `CanvasViewPage` dari awal tanpa menyertakan logika klik mention (`getMentionClicked`, `handleWrapperPointerUp`), sehingga fitur klik kata mention di Preview tidak berfungsi.
+
+### Final Fix
+1. **`CanvasPrototypePage.tsx`**:
+   - `useMemo` `initialData` dependency diubah dari `[]` → `[canvasInitialElements, canvasInitialFiles]`, sehingga `initialData` dibuat setelah data Appwrite dimuat, lalu stable.
+   - Scene format diubah dari `JSON.stringify(elements)` → `JSON.stringify({ elements, files })` — `files` berisi `BinaryFiles` yang difilter hanya untuk `fileId` gambar aktif.
+   - `sceneData` di-parse untuk mendukung **kedua format**: array lama `[]` dan objek baru `{elements, files}`.
+   - Tiga ref anti-overwrite ditambahkan: `canvasLoadFailedRef`, `serverHadElementsRef`, `hasUserChangedRef`.
+   - Fingerprint elemen (`computeFingerprint`) berdasarkan `id:version:isDeleted` — untuk bedakan onChange awal Excalidraw dari perubahan pengguna yang sesungguhnya.
+   - `canSaveScene()` sebagai fungsi pengaman bersama untuk semua jalur yang menulis kolom `scene`.
+   - `serverHadElementsRef` dan fingerprint di-reset setelah setiap simpan sukses.
+   - Konfirmasi `window.confirm` sekali untuk kanvas kosong yang menimpa kanvas non-kosong.
+   - Pesan "Kanvas kosong belum disimpan" di autosave tanpa spam.
+
+2. **`CanvasViewPage.tsx`**:
+   - `CanvasSceneLoader` child component dengan `key={routeId}` — hanya dirender setelah `canvasLoading=false`.
+   - `initialData={{ elements, files }}` dibuat langsung di JSX (props dari parent, bukan `useMemo`).
+   - `getMentionClicked`, `handleWrapperPointerDown`, `handleWrapperPointerUp` dikembalikan ke dalam `CanvasSceneLoader` dengan prop `onMentionClick: (noteId: string) => void`.
+   - `excalidrawAPIRef` disimpan via callback `excalidrawAPI` pada `<Excalidraw>`.
+   - Handler pointer (`onPointerDownCapture`/`onPointerUpCapture`) diikat ke div pembungkus, memanggil `onMentionClick` saat mention ditemukan.
+
+### Why the Fix Works
+- `BinaryFiles` sekarang diserialisasi ke kolom `scene` bersama `elements`, sehingga dimuat ulang saat kanvas dibuka.
+- `useMemo` dependency `[canvasInitialElements, canvasInitialFiles]` memastikan `initialData` dibuat setelah Appwrite mengembalikan data, bukan saat komponen mount dengan state awal kosong.
+- `key={routeId}` pada `CanvasSceneLoader` memastikan Excalidraw di-unmount dan di-mount ulang saat route berubah, sehingga `initializeScene` dipanggil dengan `initialData` yang benar.
+- Fingerprint mendeteksi perubahan pengguna yang sesungguhnya — onChange awal Excalidraw (saat inisialisasi) tidak memicu save, tetapi menggambar/mengedit ya.
+- Klik mention di Preview sekarang bekerja karena `handleWrapperPointerUp` dengan `getMentionClicked` ada di dalam `CanvasSceneLoader` dan memanggil `onMentionClick` yang disuplai parent via prop.
+
+### Verification Performed
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: Success (`✓ built in 4.32s`)
+- Klik mention di Preview: panel note kanan terbuka
+- Autosave tidak dipicu oleh onChange awal Excalidraw
+- Kanvas kosong tidak menimpa kanvas non-kosong tanpa konfirmasi
+- Format lama (array) dan baru ({elements, files}) keduanya didukung
+
+### Tests/Checks Passed
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: Success
+
+### Important Lessons for Future Similar Problems
+- **Jangan pernah menyimpan `BinaryFiles` di luar kolom `scene`** — Excalidraw tidak memiliki mekanisme persistensi bawaan untuk file biner. Selalu serialisasi ke scene dan filter hanya file yang aktif.
+- **`useMemo` dengan `[]` dependency + async data fetch = race condition** — `initialData` dibuat sebelum data tiba. Selalu masukkan state/loading flag sebagai dependency, atau gunakan child component dengan conditional render.
+- **Ketika menulis ulang komponen, salin semua logika interaksi** — `handleWrapperPointerUp` dan `getMentionClicked` bukan kode mati; mereka adalah inti dari fitur klik mention. Saat menulis ulang, seluruh alur interaksi harus dipindahkan, bukan dihapus.
+- **Fingerprint `id:version:isDeleted` lebih reliable daripada menghitung jumlah elemen** — Excalidraw bisa menambah elemen transient saat inisialisasi yang kemudian dihapus, fingerprint mendeteksi perubahan konten yang sesungguhnya.

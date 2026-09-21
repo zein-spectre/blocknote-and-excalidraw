@@ -1,14 +1,15 @@
-# Current Task: Resizable Panel Implementation
-
-**STATUS: COMPLETED**
+# Current Task: Perbaikan Muat/Simpan Kanvas — STATUS: COMPLETED
 
 ## Objective
-Implement a dynamic, resizable side panel in both the editor (`CanvasPrototypePage.tsx`) and the preview viewer (`CanvasViewPage.tsx`). The panel width should be adjustable via a mouse drag and state should persist across sessions via `localStorage`.
+Perbaiki masalah: (1) gambar upload di Excalidraw muncul kotak abu-abu, (2) autosave salah imbang, (3) klik mention di Preview tidak berfungsi.
 
 ## Subtasks
-- [x] Create the `ResizablePanel` component capturing pointer events (`onPointerDown`, `onPointerMove`, `onPointerUp`).
-- [x] Handle Excalidraw event stealing by applying `pointer-events: none` on `.excalidraw-container` during resize operations.
-- [x] Configure dynamic width clamping (minimum 320px, maximum 65% of screen width while guaranteeing 300px for the canvas).
-- [x] Save user width preference to `localStorage`.
-- [x] Inject custom CSS in `index.css` with container queries to fix the 80px visual glitch by reducing BlockNote's `.bn-editor` padding for narrow panels.
-- [x] Pass the TS linter and build pipeline without errors.
+- [x] Serialisasi BinaryFiles ke kolom scene (`{ elements, files }`).
+- [x] Perbaiki useMemo dependency `[canvasInitialElements, canvasInitialFiles]`.
+- [x] Tambahkan anti-overwrite guards: `canvasLoadFailedRef`, `serverHadElementsRef`, `hasUserChangedRef`, fingerprint.
+- [x] `canSaveScene()` sebagai fungsi pengaman bersama untuk semua jalur simpan.
+- [x] Konfirmasi `window.confirm` sekali untuk kanvas kosong.
+- [x] Kembalikan `getMentionClicked` dan `handleWrapperPointerUp` ke `CanvasSceneLoader` dengan prop `onMentionClick`.
+- [x] Commit: `d4b4a63`.
+- [x] Pass `npx tsc --noEmit` dan `npm run build`.
+

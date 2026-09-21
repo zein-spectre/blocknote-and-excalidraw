@@ -1,23 +1,21 @@
 # Changelog
 
 ## [Unreleased]
-### Added
-- Feature: Added a draggable, resizable split-view panel for the right sidebar in both `CanvasPrototypePage` and `CanvasViewPage`, persisting preferred width to `localStorage`.
-- Feature: Added `container-type: inline-size` rules to `index.css` to responsively collapse BlockNote's left gutter padding when the side panel is shrunk below 380px.
-
-- Feature: Clicking a Note Mention chip inside any BlockNote editor in the Canvas page now fetches and opens the note from Appwrite in the right-hand panel.
-- Feature: Edits to Appwrite notes in the side panel are now automatically saved to the database (800ms debounce).
-- Feature: Canvas scene is now loaded and auto-saved to an Appwrite `canvases` collection (1.5s debounce).
-- Feature: Adding a new BlockNote Box in Excalidraw automatically creates a new draft document in Appwrite and links the box to it natively.
-- Feature: Excalidraw boxes linked to Appwrite notes dynamically fetch and display their Appwrite document titles (via bulk `Query.equal`).
-- Feature: Live-synchronization of Appwrite note titles between the side panel and Excalidraw canvas boxes.
-- React Context (`EditorContext`) in `Editor.tsx` to robustly pass `onOpenNote` callbacks to inline content renderers, replacing the fragile global variable approach.
-
 ### Fixed
-- Fixed UI layout breaking and canvas squishing by decoupling the side panel width from static `flex` layouts and adopting dynamic mouse-tracking pointer events.
-- Fixed Excalidraw pointer interference during drag-resizing by applying `pointer-events: none` to the `.excalidraw-container` globally while the drag is active.
-- Bug where clicking a Note Mention chip in the canvas panel would fail to open the note due to a state collision with Excalidraw's `onChange` event handler overriding the panel state.
-- Silent UI failures when attempting to load a deleted or non-existent Appwrite note (404); now displays a prominent "Note tidak ditemukan" error message.
+- Fixed uploaded images appearing as gray boxes: `BinaryFiles` now serialized into the `scene` column alongside elements, loaded on canvas mount.
+- Fixed autosave triggering on Excalidraw's initial `onChange` (not a user edit): fingerprint (`id:version:isDeleted`) compares current scene against server snapshot.
+- Fixed autosave overwriting non-empty server scene with empty local scene: `serverHadElementsRef` guard + one-time `window.confirm`.
+- Fixed Preview (`CanvasViewPage`): restored `getMentionClicked` and `handleWrapperPointerUp` inside `CanvasSceneLoader` with `onMentionClick` prop, re-enabling mention clicks.
+- Fixed `useMemo` race condition in `CanvasPrototypePage`: dependency changed from `[]` to `[canvasInitialElements, canvasInitialFiles]` so `initialData` is created only after Appwrite data loads.
+
+### Added
+- Shared save guard `canSaveScene()` covering all scene-write paths (autosave, handlePreview).
+- Scene format supports both old (`[...]`) and new (`{elements, files}`) formats.
+- `initialSceneFingerprintRef` and `serverHadElementsRef` updated after every successful save.
+
+### Changed
+- Scene column format changed from `JSON.stringify(elements)` to `JSON.stringify({ elements, files })`.
+- `CanvasViewPage` restructured with `CanvasSceneLoader` child component (`key={routeId}`), rendered only after `canvasLoading=false`.
 
 ## [Unreleased] - 2026-09-21
 ### Added
