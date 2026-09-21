@@ -5,10 +5,9 @@ import { Editor } from "../components/Editor";
 import { SlashMenu } from "../components/SlashMenu";
 import { databases, APPWRITE_CONFIG, ID } from "../lib/appwrite";
 import { Query } from "appwrite";
+import blocknoteIcon from "../assets/ikon-blocknote.png";
 
-// Text box embeddable styles
-const TEXT_BOX_BG = "#f0fdf4";
-const TEXT_BOX_BORDER = "#86efac";
+const ENABLE_CANVAS_SLASH_MENU = false;
 
 export function CanvasPrototypePage() {
     const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
@@ -52,10 +51,6 @@ export function CanvasPrototypePage() {
     const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
     const [mentionMenuTextarea, setMentionMenuTextarea] = useState<HTMLTextAreaElement | null>(null);
     const [mentionMenuPosition, setMentionMenuPosition] = useState({ x: 0, y: 0 });
-
-    // Text box editor state (key = element id, value = JSON string of blocks)
-    const [textBoxContent, setTextBoxContent] = useState<Record<string, string>>({});
-    const textBoxDebounceRef = useRef<Record<string, any>>({});
 
     // Refs for tracking text element editing (customData.mentions)
     const textareaListenerRef = useRef<any>(null);
@@ -445,52 +440,6 @@ export function CanvasPrototypePage() {
 
 
     const renderEmbeddable = (element: any, _appState: any) => {
-        if (element.link && element.link.startsWith("text://")) {
-            const textBoxId = element.link.replace("text://", "");
-            const initialContent = textBoxContent[textBoxId] || "";
-            const stopProp = (e: React.KeyboardEvent) => {
-                e.stopPropagation();
-                e.nativeEvent.stopImmediatePropagation();
-            };
-            return (
-                <div
-                    style={{
-                        width: "100%", height: "100%",
-                        background: TEXT_BOX_BG,
-                        border: `1px solid ${TEXT_BOX_BORDER}`,
-                        borderRadius: 8,
-                        overflow: "hidden",
-                        padding: 0,
-                    }}
-                    onKeyDown={stopProp}
-                    onKeyUp={stopProp}
-                    onKeyPress={stopProp}
-                >
-                    <Editor
-                        key={`textbox-${textBoxId}`}
-                        initialContent={initialContent}
-                        onChange={(json) => {
-                            setTextBoxContent(prev => ({ ...prev, [textBoxId]: json }));
-                            if (textBoxDebounceRef.current[textBoxId]) {
-                                clearTimeout(textBoxDebounceRef.current[textBoxId]);
-                            }
-                            textBoxDebounceRef.current[textBoxId] = setTimeout(() => {
-                                if (!excalidrawAPI) return;
-                                const allElements = excalidrawAPI.getSceneElements();
-                                const updated = allElements.map((el: any) =>
-                                    el.id === element.id
-                                        ? { ...el, customData: { ...el.customData, content: json } }
-                                        : el
-                                );
-                                excalidrawAPI.updateScene({ elements: updated });
-                            }, 800);
-                        }}
-                        enableMentions={true}
-                        onOpenNote={handleOpenAppwriteNote}
-                    />
-                </div>
-            );
-        }
 
         let title = "(Tanpa judul)";
         if (element.link && element.link.startsWith("note://") && !element.link.startsWith("note://embed-")) {
@@ -572,42 +521,6 @@ export function CanvasPrototypePage() {
         } catch (e) {
             console.error("Gagal membuat dokumen Appwrite untuk kotak baru:", e);
         }
-    };
-
-    const addTextBox = () => {
-        if (!excalidrawAPI) return;
-        const newId = `text-${Date.now()}`;
-        const newTextBox = {
-            type: "embeddable" as const,
-            version: 1,
-            versionNonce: Date.now(),
-            isDeleted: false,
-            id: newId,
-            fillStyle: "solid" as const,
-            strokeWidth: 1,
-            strokeStyle: "solid" as const,
-            roughness: 0,
-            opacity: 100,
-            angle: 0,
-            x: 400 + Math.random() * 50,
-            y: 200 + Math.random() * 50,
-            strokeColor: "#22c55e",
-            backgroundColor: TEXT_BOX_BG,
-            width: 280,
-            height: 140,
-            seed: Date.now(),
-            groupIds: [],
-            frameId: null,
-            roundness: null,
-            boundElements: [],
-            updated: 1,
-            link: `text://${newId}`,
-            locked: false,
-            customData: { content: "" },
-        };
-        excalidrawAPI.updateScene({
-            elements: [...excalidrawAPI.getSceneElements(), newTextBox],
-        });
     };
 
     const handleChange = (elements: readonly any[], appState: any) => {
@@ -806,6 +719,7 @@ export function CanvasPrototypePage() {
     };
 
     const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+        if (!ENABLE_CANVAS_SLASH_MENU) return;
         if (e.key !== "/") return;
         const target = e.target as HTMLElement;
         const tag = target.tagName.toLowerCase();
@@ -842,25 +756,13 @@ export function CanvasPrototypePage() {
         <div style={{ display: "flex", width: "100%", height: "calc(100vh - 80px)", overflow: "hidden" }}>
             {/* Canvas Area */}
             <div style={{ flex: (selectedNoteId || appwriteNoteId) ? "1 1 55%" : "1 1 100%", position: "relative", transition: "all 0.3s ease", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}>
-                <div style={{ position: "absolute", top: 16, left: 16, zIndex: 10, display: "flex", alignItems: "center", gap: "12px" }}>
-                    <button
-                        onClick={addEmbeddable}
-                        style={{ padding: "8px 16px", background: "#3b82f6", color: "white", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: "bold", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}
-                    >
-                        + Add BlockNote Box
-                    </button>
-                    <button
-                        onClick={addTextBox}
-                        style={{ padding: "8px 16px", background: "#22c55e", color: "white", borderRadius: "6px", border: "none", cursor: "pointer", fontWeight: "bold", boxShadow: "0 2px 4px rgba(0,0,0,0.1)" }}
-                    >
-                        + Add Kotak Teks
-                    </button>
-                    {canvasSaveStatus && (
-                        <span style={{ fontSize: "0.875rem", color: "#64748b", fontWeight: 500, background: "rgba(255,255,255,0.8)", padding: "4px 8px", borderRadius: "4px" }}>
+                {canvasSaveStatus && (
+                    <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 10 }}>
+                        <span style={{ fontSize: "0.875rem", color: "#64748b", fontWeight: 500, background: "rgba(255,255,255,0.8)", padding: "6px 12px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
                             {canvasSaveStatus}
                         </span>
-                    )}
-                </div>
+                    </div>
+                )}
                 {canvasLoading ? (
                     <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", color: "#64748b" }}>
                         Memuat kanvas...
@@ -872,6 +774,34 @@ export function CanvasPrototypePage() {
                         initialData={{ elements: canvasInitialElements }}
                         renderEmbeddable={renderEmbeddable}
                         validateEmbeddable={() => true}
+                        renderTopRightUI={() => (
+                            <button
+                                onClick={addEmbeddable}
+                                style={{
+                                    height: "2.5rem",
+                                    padding: "0 0.75rem",
+                                    display: "flex",
+                                    alignItems: "center",
+                                    justifyContent: "center",
+                                    gap: "0.5rem",
+                                    background: "var(--island-bg-color, white)",
+                                    border: "1px solid var(--default-border-color, #e2e8f0)",
+                                    borderRadius: "0.5rem",
+                                    cursor: "pointer",
+                                    color: "var(--text-primary-color, #0f172a)",
+                                    fontSize: "0.875rem",
+                                    fontWeight: 500,
+                                    boxShadow: "var(--shadow-island, 0 1px 3px rgba(0,0,0,0.1))",
+                                    marginLeft: "0.5rem",
+                                }}
+                                title="Tambah BlockNote Box"
+                                onMouseEnter={(e) => e.currentTarget.style.background = "var(--button-hover-bg, #f1f5f9)"}
+                                onMouseLeave={(e) => e.currentTarget.style.background = "var(--island-bg-color, white)"}
+                            >
+                                <img src={blocknoteIcon} alt="BlockNote" style={{ width: 20, height: 20 }} />
+                                BlockNote
+                            </button>
+                        )}
                         onChange={handleChange}
                         onPointerUpdate={({ pointer }) => {
                             lastPointerSceneRef.current = { x: pointer.x, y: pointer.y };

@@ -48,9 +48,14 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(async () => {
             try {
-                const queries = [Query.limit(10), Query.orderDesc("$createdAt")];
+                // Mention mode: limit 50, otherwise limit 10
+                const limit = mode === "mention" ? 50 : 10;
+                const queries = [Query.limit(limit)];
+                
                 if (query.trim()) {
                     queries.push(Query.search("title", query));
+                } else {
+                    queries.push(Query.orderDesc("$createdAt"));
                 }
 
                 const response = await databases.listDocuments(
@@ -60,7 +65,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                 );
 
                 const exactMatch = response.documents.find(
-                    d => d.title.toLowerCase() === query.toLowerCase()
+                    d => d.title.toLowerCase() === query.trim().toLowerCase()
                 );
 
                 const noteItems: NoteItem[] = response.documents.map(doc => ({
@@ -69,28 +74,54 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                     onSelect: () => insertNoteBox(doc.$id, doc.title, false),
                 }));
 
-                if (query.trim() !== "" && !exactMatch) {
-                    noteItems.unshift({
-                        id: "__create__",
-                        title: `Buat note baru: ${query}`,
-                        isCreateNew: true,
-                        onSelect: () => createAndInsertNote(query),
-                    });
+                // Client-side case-insensitive sorting A-Z for mention mode
+                if (mode === "mention") {
+                    noteItems.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+                }
+
+                if (mode === "slash") {
+                    if (query.trim() !== "" && !exactMatch) {
+                        noteItems.unshift({
+                            id: "__create__",
+                            title: `Buat note baru: ${query}`,
+                            isCreateNew: true,
+                            onSelect: () => createAndInsertNote(query),
+                        });
+                    }
                 }
 
                 setItems(noteItems);
+                
+                // For mention mode, selectedIndex 0 is the "Buat note baru" sticky button if list is empty,
+                // or if list is not empty, it's the first note in the list. Wait, keyboard navigation needs to handle sticky button.
                 setSelectedIndex(0);
             } catch (e) {
                 console.error("Failed to search notes:", e);
                 setItems([]);
             }
         }, 250);
-    }, [query]);
+    }, [query, mode]);
+
+    // For mention mode, total items = items.length + 1 (the sticky create button)
+    const exactMatchExists = items.some(item => item.title.toLowerCase() === query.trim().toLowerCase());
+    const showStickyCreate = mode === "mention" && (!exactMatchExists || query.trim() === "");
+    const totalItems = mode === "mention" ? (showStickyCreate ? items.length + 1 : items.length) : items.length;
 
     useEffect(() => {
-        const selectedEl = listRef.current?.children[selectedIndex] as HTMLElement;
-        selectedEl?.scrollIntoView({ block: "nearest" });
-    }, [selectedIndex]);
+        if (mode === "mention") {
+            // Scroll logic is a bit different since index 0 might be sticky
+            if (showStickyCreate && selectedIndex === 0) return; // Sticky button is always visible
+            
+            const listIndex = showStickyCreate ? selectedIndex - 1 : selectedIndex;
+            if (listIndex >= 0) {
+                const selectedEl = listRef.current?.children[listIndex] as HTMLElement;
+                selectedEl?.scrollIntoView({ block: "nearest" });
+            }
+        } else {
+            const selectedEl = listRef.current?.children[selectedIndex] as HTMLElement;
+            selectedEl?.scrollIntoView({ block: "nearest" });
+        }
+    }, [selectedIndex, showStickyCreate, mode]);
 
     const insertNoteBox = (noteId: string, title: string, isNew: boolean) => {
         if (mode === "mention") {
@@ -138,6 +169,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
         if (isNew) {
             onNoteCreated(noteId, title);
         }
+        console.log("[DIAG-S] Menu ditutup karena: insertNoteBox dipanggil (note dipilih).");
         onClose();
     };
 
@@ -169,16 +201,27 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
 
         if (e.key === "ArrowDown") {
             e.preventDefault();
-            setSelectedIndex(i => Math.min(i + 1, items.length - 1));
+            setSelectedIndex(i => Math.min(i + 1, totalItems - 1));
         } else if (e.key === "ArrowUp") {
             e.preventDefault();
             setSelectedIndex(i => Math.max(i - 1, 0));
         } else if (e.key === "Enter") {
             e.preventDefault();
-            const item = items[selectedIndex];
-            if (item) item.onSelect();
+            if (mode === "mention") {
+                if (showStickyCreate && selectedIndex === 0) {
+                    createAndInsertNote(query);
+                } else {
+                    const listIndex = showStickyCreate ? selectedIndex - 1 : selectedIndex;
+                    const item = items[listIndex];
+                    if (item) item.onSelect();
+                }
+            } else {
+                const item = items[selectedIndex];
+                if (item) item.onSelect();
+            }
         } else if (e.key === "Escape") {
             e.preventDefault();
+            console.log("[DIAG-S] Menu ditutup karena: Escape ditekan.");
             onClose();
         }
     };
@@ -192,6 +235,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
     const handleClickOutside = (e: MouseEvent) => {
         const target = e.target as HTMLElement;
         if (!target.closest(".slash-menu")) {
+            console.log("[DIAG-S] Menu ditutup karena: klik di luar area menu (handleClickOutside). activeElement:", document.activeElement?.tagName, document.activeElement?.className);
             onClose();
         }
     };
@@ -207,7 +251,8 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
             style={{
                 position: "fixed",
                 left: position.x,
-                top: position.y,
+                // Adjust position dynamically if near bottom screen edge (Task 6)
+                top: position.y > window.innerHeight - 360 ? position.y - 360 - 40 : position.y,
                 zIndex: 9999,
                 background: "white",
                 border: "1px solid #e2e8f0",
@@ -220,6 +265,15 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                 flexDirection: "column",
             }}
             onKeyDown={handleKeyDown}
+            onMouseDown={(e) => {
+                if (mode === "mention") {
+                    console.log("[DIAG-S] Mousedown di menu (mode mention). Mencegah hilangnya fokus textarea.");
+                    e.preventDefault();
+                }
+            }}
+            onWheel={(e) => {
+                e.stopPropagation();
+            }}
         >
             <div style={{ padding: "8px 12px", borderBottom: "1px solid #e2e8f0" }}>
                 <input
@@ -229,6 +283,10 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                     onChange={e => setQuery(e.target.value)}
                     placeholder={mode === "mention" ? "Cari note..." : "Cari atau buat note..."}
                     readOnly={mode === "mention"}
+                    onMouseDown={() => {
+                        console.log("[DIAG-S] Mousedown di kotak cari.");
+                        // if mode is mention, outer div already prevents default.
+                    }}
                     style={{
                         width: "100%",
                         border: "none",
@@ -240,41 +298,66 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                     onKeyDown={handleKeyDown}
                 />
             </div>
-            <div ref={listRef} style={{ overflow: "auto", flex: 1 }}>
-                {items.length === 0 && query.trim() !== "" && (
+            {mode === "mention" && showStickyCreate && (
+                <div
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        createAndInsertNote(query);
+                    }}
+                    style={{
+                        padding: "10px 12px",
+                        cursor: "pointer",
+                        background: selectedIndex === 0 ? "#f1f5f9" : "white",
+                        borderBottom: "1px solid #e2e8f0",
+                        fontSize: "0.9rem",
+                        color: "#3b82f6",
+                        fontWeight: 600,
+                        position: "sticky",
+                        top: 0,
+                        zIndex: 10,
+                    }}
+                >
+                    + Buat note baru{query.trim() ? `: ${query}` : ''}
+                </div>
+            )}
+            <div ref={listRef} style={{ overflow: "auto", flex: 1, maxHeight: mode === "mention" ? "260px" : "auto" }}>
+                {mode === "slash" && items.length === 0 && query.trim() !== "" && (
                     <div style={{ padding: "12px", color: "#64748b", fontSize: "0.875rem", textAlign: "center" }}>
                         Tidak ada hasil
                     </div>
                 )}
-                {items.length === 0 && query.trim() === "" && (
+                {mode === "slash" && items.length === 0 && query.trim() === "" && (
                     <div style={{ padding: "12px", color: "#64748b", fontSize: "0.875rem", textAlign: "center" }}>
                         Ketik untuk mencari note...
                     </div>
                 )}
-                {items.map((item, idx) => (
-                    <div
-                        key={item.id}
-                        onMouseDown={(e) => {
-                            e.preventDefault(); // Prevents focus loss from textarea
-                            item.onSelect();
-                        }}
-                        style={{
-                            padding: "10px 12px",
-                            cursor: "pointer",
-                            background: idx === selectedIndex ? "#f1f5f9" : "transparent",
-                            borderBottom: "1px solid #f8fafc",
-                            fontSize: "0.9rem",
-                            color: item.isCreateNew ? "#3b82f6" : "#0f172a",
-                            fontWeight: item.isCreateNew ? 600 : 400,
-                        }}
-                    >
-                        {item.isCreateNew ? (
-                            <span>+ {item.title}</span>
-                        ) : (
-                            <span>📝 {item.title}</span>
-                        )}
-                    </div>
-                ))}
+                {items.map((item, idx) => {
+                    const activeIndex = mode === "mention" ? (showStickyCreate ? idx + 1 : idx) : idx;
+                    return (
+                        <div
+                            key={item.id}
+                            onMouseDown={(e) => {
+                                e.preventDefault(); // Prevents focus loss from textarea
+                                item.onSelect();
+                            }}
+                            style={{
+                                padding: "10px 12px",
+                                cursor: "pointer",
+                                background: activeIndex === selectedIndex ? "#f1f5f9" : "transparent",
+                                borderBottom: "1px solid #f8fafc",
+                                fontSize: "0.9rem",
+                                color: item.isCreateNew ? "#3b82f6" : "#0f172a",
+                                fontWeight: item.isCreateNew ? 600 : 400,
+                            }}
+                        >
+                            {item.isCreateNew ? (
+                                <span>+ {item.title}</span>
+                            ) : (
+                                <span>📝 {item.title}</span>
+                            )}
+                        </div>
+                    );
+                })}
             </div>
         </div>
     );
