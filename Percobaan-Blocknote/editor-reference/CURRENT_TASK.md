@@ -1,15 +1,14 @@
-# Current Task: Soft Delete & Canvas Mention Removal
+# Current Task: Resizable Panel Implementation
 
 **STATUS: COMPLETED**
 
 ## Objective
-Implement a soft delete mechanism for Appwrite notes (status: "trashed"), provide a Trash management page for admins, and automatically clean up the Excalidraw canvas by removing deleted note cards and erasing mention texts cleanly without corrupting Excalidraw's hit detection or rendering.
+Implement a dynamic, resizable side panel in both the editor (`CanvasPrototypePage.tsx`) and the preview viewer (`CanvasViewPage.tsx`). The panel width should be adjustable via a mouse drag and state should persist across sessions via `localStorage`.
 
 ## Subtasks
-- [x] Create a soft delete filter across all components querying the `articles` collection to exclude `trashed` notes.
-- [x] Create an `/admin/trash` dashboard page for viewing and restoring deleted notes.
-- [x] Add a Trash icon to the right panel header in the canvas to trigger `moveToTrash`.
-- [x] On note deletion, remove the associated `embeddable` card from the canvas by setting `isDeleted = true`.
-- [x] On note deletion, safely string-replace the mention title from any text elements pointing to it.
-- [x] Utilize Excalidraw's `restoreElements` with `refreshDimensions: true` to recalculate text dimensions accurately.
-- [x] Push canvas modifications to the undo history using `CaptureUpdateAction.IMMEDIATELY`.
+- [x] Create the `ResizablePanel` component capturing pointer events (`onPointerDown`, `onPointerMove`, `onPointerUp`).
+- [x] Handle Excalidraw event stealing by applying `pointer-events: none` on `.excalidraw-container` during resize operations.
+- [x] Configure dynamic width clamping (minimum 320px, maximum 65% of screen width while guaranteeing 300px for the canvas).
+- [x] Save user width preference to `localStorage`.
+- [x] Inject custom CSS in `index.css` with container queries to fix the 80px visual glitch by reducing BlockNote's `.bn-editor` padding for narrow panels.
+- [x] Pass the TS linter and build pipeline without errors.

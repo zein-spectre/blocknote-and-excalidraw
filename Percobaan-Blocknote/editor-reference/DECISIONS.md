@@ -29,3 +29,9 @@
 **Context:** When a note is soft-deleted, any inline text mentions in the canvas pointing to it must be erased. Simply replacing the `text` string via raw DOM manipulation or `mutateElement` destroys Excalidraw's hit-detection bounding box, causing invisible selection bugs.
 **Decision:** We modify the `originalText` string back-to-front and then pass the modified text element back through the core API `restoreElements([el], null, { refreshDimensions: true })`.
 **Rationale:** This utilizes Excalidraw's native dimension-calculation engine to cleanly re-wrap lines and recalculate `width` and `height`, completely avoiding flaky DOM `textarea` simulations or illegal raw object modifications.
+
+## 6. CSS Pointer Events Toggling for Drag Resizing
+**Date:** 2026-09-21
+**Context:** When a user clicks and drags the edge of the right side panel to resize it over the Excalidraw canvas, Excalidraw's aggressive pointer event capturing hijacks the mouse drag, causing the resize handle to lose track of the cursor resulting in a severely broken drag experience.
+**Decision:** We bind `setPointerCapture` to the drag handle itself and synchronously apply `pointer-events: none` to the `.excalidraw-container` globally for the duration of the drag (restoring it to `auto` on mouse up).
+**Rationale:** This definitively prevents Excalidraw from intercepting the user's cursor during resizing, guaranteeing a smooth and stutter-free drag experience while maintaining the canvas's visual flexibility.

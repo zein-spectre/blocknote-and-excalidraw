@@ -90,3 +90,30 @@ Using `restoreElements` leverages Excalidraw's internal native dimension-measuri
 ### Important Lessons for Future Similar Problems
 - **Never manipulate Excalidraw text element dimensions manually** by mutating `width` or `height` values, as this corrupts Excalidraw's hit detection and bounding box engine. 
 - Always rely on official API functions like `convertToExcalidrawElements` or `restoreElements` with `refreshDimensions: true` to let the Excalidraw engine calculate text measurements automatically when changing strings via code.
+
+## Issue: Side Panel Flexibility and Responsiveness (Resizable Panel)
+**Date:** 2026-09-21
+
+### Confirmed Root Cause
+The right side panel (`Appwrite Note` / `Memory Note`) was strictly hardcoded with `flex: 45%` layout. This caused a rigid user experience, rendering the canvas viewport too narrow for larger screens or the panel too narrow for reading long notes. Furthermore, shrinking the panel aggressively caused BlockNote's left gutter (padding for the side menu handle) to compress the actual text column excessively.
+
+### Final Fix
+1. Implemented a `ResizablePanel` component tracking pointer events (`onPointerDown`, `onPointerMove`, `onPointerUp`) to calculate width dynamically and save it to `localStorage`.
+2. Intercepted Excalidraw's aggressive internal pointer capture by setting `.excalidraw-container { pointer-events: none; }` during the active resizing operation.
+3. Added container queries in `index.css` to conditionally reduce BlockNote's `.bn-editor` left padding from 54px to 28px when the panel is smaller than 380px.
+
+### Why the Fix Works
+Temporarily disabling `pointer-events` on the Excalidraw wrapper prevents its internal canvas event listeners from hijacking the native mouse drag sequence, allowing smooth and uninterrupted resizing. The container query guarantees that the rich text editor's layout respects the restricted spatial boundaries without clipping text or floating buttons.
+
+### Verification Performed
+- Dragged the resizer edge and observed smooth width transition in both editor and preview pages.
+- Shrunk panel to absolute minimum (320px) and verified BlockNote's margin narrowed cleanly.
+- Expanded to maximum width and confirmed the canvas area maintained a strict 300px reserve limit.
+- Verified double-click on the resizer successfully reverts width to the 450px default.
+
+### Tests/Checks Passed
+- `npx tsc --noEmit`: 0 errors
+- `npm run build`: Success
+
+### Important Lessons for Future Similar Problems
+When building drag-to-resize layouts adjacent to complex canvas applications (like Excalidraw, Figma-clones, or WebGL), you must temporarily disable pointer events on the canvas layer during the drag action. Otherwise, the canvas will capture the pointer, resulting in stuttering, lost drag context, or unintended geometry modifications on the canvas itself.
