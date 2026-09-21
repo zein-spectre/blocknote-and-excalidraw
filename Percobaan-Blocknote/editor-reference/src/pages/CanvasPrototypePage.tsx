@@ -13,7 +13,7 @@ const TEXT_BOX_BORDER = "#86efac";
 export function CanvasPrototypePage() {
     const [excalidrawAPI, setExcalidrawAPI] = useState<any>(null);
     const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
-    
+
     // State for Appwrite Note
     const [appwriteNoteId, setAppwriteNoteId] = useState<string | null>(null);
     const [appwriteNoteData, setAppwriteNoteData] = useState<{ title: string; content: string } | null>(null);
@@ -48,9 +48,337 @@ export function CanvasPrototypePage() {
     const lastPointerScreenRef = useRef({ x: 400, y: 200 });
     const slashMenuScenePosRef = useRef({ x: 400, y: 100 });
 
+    // Note mention menu state
+    const [mentionMenuOpen, setMentionMenuOpen] = useState(false);
+    const [mentionMenuTextarea, setMentionMenuTextarea] = useState<HTMLTextAreaElement | null>(null);
+    const [mentionMenuPosition, setMentionMenuPosition] = useState({ x: 0, y: 0 });
+
     // Text box editor state (key = element id, value = JSON string of blocks)
     const [textBoxContent, setTextBoxContent] = useState<Record<string, string>>({});
     const textBoxDebounceRef = useRef<Record<string, any>>({});
+
+    // Refs for tracking text element editing (customData.mentions)
+    const textareaListenerRef = useRef<any>(null);
+    const activeTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+    const editingTextElementIdRef = useRef<string | null>(null);
+    const mentionEditsRef = useRef<{ elementId: string; mentions: { noteId: string; title: string }[] }[]>([]);
+    // pendingMentionUpdateRef was removed since we do it instantly now
+    const noteTitlesForMentionRef = useRef<Record<string, string>>({});
+    
+    const [mentionQuery, setMentionQuery] = useState("");
+    const mentionStartIndexRef = useRef(-1);
+    const mentionMenuOpenRef = useRef(false);
+    const slashMenuRef = useRef<any>(null);
+    
+    const pointerDownScreenPosRef = useRef<{ x: number, y: number } | null>(null);
+    const pointerDownMentionRef = useRef<any>(null);
+
+    useEffect(() => {
+        mentionMenuOpenRef.current = mentionMenuOpen;
+    }, [mentionMenuOpen]);
+
+    // Keep noteTitlesForMentionRef in sync with appwriteTitles
+    useEffect(() => {
+        noteTitlesForMentionRef.current = appwriteTitles;
+    }, [appwriteTitles]);
+
+    const setupMentionListener = () => {
+        const textarea = document.querySelector<HTMLTextAreaElement>(".excalidraw-wysiwyg");
+        if (!textarea) {
+            if (mentionMenuOpenRef.current) {
+                setMentionMenuOpen(false);
+            }
+            return;
+        }
+
+        if (activeTextareaRef.current === textarea) return;
+
+        if (textareaListenerRef.current && activeTextareaRef.current) {
+            const old = textareaListenerRef.current;
+            activeTextareaRef.current.removeEventListener("keydown", old.keydown, true);
+            activeTextareaRef.current.removeEventListener("input", old.input);
+        }
+
+        activeTextareaRef.current = textarea;
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (!mentionMenuOpenRef.current) {
+                if (e.key === "@") {
+                    const selStart = (e.target as HTMLTextAreaElement).selectionStart;
+                    const val = (e.target as HTMLTextAreaElement).value;
+                    if (selStart > 0 && !/\s/.test(val[selStart - 1])) return;
+
+                    const rect = textarea.getBoundingClientRect();
+                    setMentionMenuPosition({ x: rect.left, y: rect.bottom + 5 });
+                    setMentionMenuTextarea(textarea);
+                    setMentionMenuOpen(true);
+                    
+                    mentionStartIndexRef.current = selStart;
+                    setMentionQuery("");
+
+                    console.log("[DIAG-M] Menu dibuka. document.activeElement:", document.activeElement?.tagName, document.activeElement?.className, "Textarea ada:", !!document.querySelector(".excalidraw-wysiwyg"));
+                }
+                return;
+            }
+
+            if (["ArrowUp", "ArrowDown", "Enter", "Escape"].includes(e.key)) {
+                e.preventDefault();
+                e.stopPropagation();
+                e.stopImmediatePropagation();
+                if (slashMenuRef.current) {
+                    slashMenuRef.current.handleKeyDown(e);
+                }
+            }
+        };
+
+        const handleInput = () => {
+            if (!mentionMenuOpenRef.current) return;
+            const selStart = textarea.selectionStart;
+            
+            if (selStart <= mentionStartIndexRef.current) {
+                setMentionMenuOpen(false);
+                return;
+            }
+            
+            const val = textarea.value;
+            if (val[mentionStartIndexRef.current] !== "@") {
+                setMentionMenuOpen(false);
+                return;
+            }
+
+            const queryText = val.slice(mentionStartIndexRef.current + 1, selStart);
+            setMentionQuery(queryText);
+        };
+
+        textarea.addEventListener("keydown", handleKeyDown, true);
+        textarea.addEventListener("input", handleInput);
+        
+        textareaListenerRef.current = { keydown: handleKeyDown, input: handleInput };
+    };
+    
+    const getMentionClicked = (el: any, clickX: number, clickY: number) => {
+        if (!el.customData?.mentions?.length) return null;
+        
+        // 1. Diagnosis log for bound text
+        if (el.containerId) {
+            console.log("[DIAG-W] === Klik di Bentuk dengan Teks Terikat ===");
+            console.log("[DIAG-W] customData.mentions:", el.customData.mentions);
+            console.log("[DIAG-W] el.text:", JSON.stringify(el.text));
+            console.log("[DIAG-W] el.originalText:", JSON.stringify(el.originalText));
+        }
+
+        const originalText = el.originalText || el.text;
+        const wrappedText = el.text;
+        
+        // 2. Build mapping array: map[wrappedIndex] = originalIndex
+        const map: number[] = new Array(wrappedText.length).fill(-1);
+        let o = 0;
+        let w = 0;
+        let mappingValid = true;
+        
+        while (w < wrappedText.length && o < originalText.length) {
+            if (wrappedText[w] === originalText[o]) {
+                map[w] = o;
+                w++;
+                o++;
+            } else {
+                if (wrappedText[w] === '\n') {
+                    if (originalText[o] === ' ') {
+                        map[w] = o;
+                        w++;
+                        o++;
+                    } else {
+                        map[w] = o;
+                        w++;
+                    }
+                } else if (originalText[o] === ' ' || originalText[o] === '\r' || originalText[o] === '\n') {
+                    o++;
+                } else {
+                    mappingValid = false;
+                    break;
+                }
+            }
+        }
+        while (w < wrappedText.length && wrappedText[w] === '\n') {
+            map[w] = o;
+            w++;
+        }
+
+        if (!mappingValid && el.containerId) {
+            console.log("[DIAG-W] Pemetaan karakter tidak bisa dibuat pasti untuk teks ini.");
+        }
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return null;
+        
+        const fontFamilyStr = el.fontFamily === 1 ? "Virgil, Segoe UI Emoji" : el.fontFamily === 2 ? "Helvetica, Segoe UI Emoji" : el.fontFamily === 3 ? "Cascadia, Segoe UI Emoji" : "Virgil";
+        ctx.font = `${el.fontSize}px ${fontFamilyStr}`;
+        ctx.textBaseline = "top"; 
+        
+        const lines = wrappedText.split("\n");
+        const lineHeightPx = el.fontSize * (el.lineHeight || 1.2);
+        let currentY = el.y;
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const lineWidth = ctx.measureText(line).width;
+            let lineStartX = el.x;
+            
+            if (el.textAlign === "center") {
+                lineStartX = el.x + el.width / 2 - lineWidth / 2;
+            } else if (el.textAlign === "right") {
+                lineStartX = el.x + el.width - lineWidth;
+            }
+            
+            if (clickY >= currentY && clickY <= currentY + lineHeightPx) {
+                if (clickX >= lineStartX && clickX <= lineStartX + lineWidth) {
+                    let charIndexInLine = line.length - 1;
+                    for (let j = 0; j < line.length; j++) {
+                        const startX = lineStartX + ctx.measureText(line.substring(0, j)).width;
+                        const endX = lineStartX + ctx.measureText(line.substring(0, j + 1)).width;
+                        if (clickX >= startX && clickX <= endX) {
+                            charIndexInLine = j;
+                            break;
+                        }
+                    }
+                    
+                    const absoluteWrappedIndex = lines.slice(0, i).join("\n").length + (i > 0 ? 1 : 0) + charIndexInLine;
+                    
+                    if (el.containerId) {
+                        console.log("[DIAG-W] Klik mengenai huruf ke:", absoluteWrappedIndex, "di wrappedText, yaitu karakter:", JSON.stringify(wrappedText[absoluteWrappedIndex]));
+                    }
+
+                    if (!mappingValid) return null;
+                    
+                    const originalIndex = map[absoluteWrappedIndex];
+                    if (originalIndex === -1) return null;
+                    
+                    if (el.containerId) {
+                        console.log("[DIAG-W] Terpetakan ke originalIndex:", originalIndex, "yaitu karakter:", JSON.stringify(originalText[originalIndex]));
+                    }
+
+                    for (const mention of el.customData.mentions) {
+                        let searchIndex = 0;
+                        while (true) {
+                            const idx = originalText.indexOf(mention.title, searchIndex);
+                            if (idx === -1) break;
+                            
+                            if (el.containerId) {
+                                console.log("[DIAG-W] Mengecek mention:", mention.title, "pada rentang ori:", idx, "sampai", idx + mention.title.length - 1);
+                            }
+
+                            if (originalIndex >= idx && originalIndex < idx + mention.title.length) {
+                                if (el.containerId) {
+                                    console.log("[DIAG-W] BINGO! Mention terkena klik.");
+                                }
+                                return mention;
+                            }
+                            searchIndex = idx + mention.title.length;
+                        }
+                    }
+                }
+            }
+            
+            currentY += lineHeightPx;
+        }
+        
+        return null;
+    };
+
+    useEffect(() => {
+        const interval = setInterval(setupMentionListener, 200);
+        return () => {
+            clearInterval(interval);
+            if (textareaListenerRef.current && activeTextareaRef.current) {
+                const old = textareaListenerRef.current;
+                activeTextareaRef.current.removeEventListener("keydown", old.keydown, true);
+                activeTextareaRef.current.removeEventListener("input", old.input);
+            }
+        };
+    }, []);
+
+    useEffect(() => {
+        const onPointerDown = (e: PointerEvent) => {
+            pointerDownScreenPosRef.current = { x: e.clientX, y: e.clientY };
+        };
+        const onPointerUp = (e: PointerEvent) => {
+            if (pointerDownScreenPosRef.current && pointerDownMentionRef.current) {
+                const dx = e.clientX - pointerDownScreenPosRef.current.x;
+                const dy = e.clientY - pointerDownScreenPosRef.current.y;
+                if (Math.sqrt(dx * dx + dy * dy) < 4) {
+                    handleOpenAppwriteNote(pointerDownMentionRef.current.noteId);
+                }
+            }
+            pointerDownMentionRef.current = null;
+        };
+        document.addEventListener("pointerdown", onPointerDown, true);
+        document.addEventListener("pointerup", onPointerUp, true);
+        return () => {
+            document.removeEventListener("pointerdown", onPointerDown, true);
+            document.removeEventListener("pointerup", onPointerUp, true);
+        };
+    }, []);
+
+    // Track when text editing ends — set pending flag so next onChange
+    // can attach mentions to the right element.
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (mentionMenuOpen) return;
+            const prev = editingTextElementIdRef.current;
+            const current = excalidrawAPI?.getAppState()?.editingTextElement;
+            editingTextElementIdRef.current = current?.id ?? null;
+
+            if (prev && !editingTextElementIdRef.current) {
+                // Just stopped editing element prev
+                console.log("[DIAG-C] editingTextElement berubah jadi null. Memeriksa mentionEditsRef untuk", prev);
+                const editsIndex = mentionEditsRef.current.findIndex(e => e.elementId === prev);
+                
+                if (editsIndex !== -1) {
+                    const { elementId, mentions } = mentionEditsRef.current.splice(editsIndex, 1)[0];
+                    console.log("[DIAG-C] Menemukan mentions pending untuk elemen", elementId, ":", mentions);
+                    
+                    if (excalidrawAPI) {
+                        const allElements = excalidrawAPI.getSceneElements();
+                        const el = allElements.find((e: any) => e.id === elementId);
+                        
+                        if (el && el.type === "text") {
+                            const existing = el.customData?.mentions ?? [];
+                            const newMentions = mentions.filter(
+                                (m) => !existing.some((ex: any) => ex.noteId === m.noteId)
+                            );
+                            
+                            if (newMentions.length > 0) {
+                                console.log("[DIAG-C] updateScene dipanggil untuk elemen teks", elementId);
+                                
+                                const updated = allElements.map((e: any) => {
+                                    if (e.id === elementId) {
+                                        // Mutasi reference agar tidak rusak di cache Excalidraw, tapi
+                                        // gunakan Object.assign atau cara aman Excalidraw.
+                                        // Excalidraw mereturn read-only array, tapi kita memutasi properties di dalamnya (khusus customData)
+                                        e.customData = { ...e.customData, mentions: [...existing, ...newMentions] };
+                                        
+                                        // Agar Excalidraw tahu ini berubah (secara state), kita bisa update versinya
+                                        // Atau cukup panggil updateScene yang akan me-re-render
+                                        return e;
+                                    }
+                                    return e;
+                                });
+                                
+                                excalidrawAPI.updateScene({ elements: updated, commitToHistory: true });
+                                
+                                setTimeout(() => {
+                                    const newEl = excalidrawAPI.getSceneElements().find((e: any) => e.id === elementId);
+                                    console.log("[DIAG-C] Isi customData sesudahnya:", newEl?.customData);
+                                }, 50);
+                            }
+                        }
+                    }
+                }
+            }
+        }, 100);
+        return () => clearInterval(interval);
+    }, [excalidrawAPI, mentionMenuOpen]);
 
     useEffect(() => {
         const loadCanvas = async () => {
@@ -71,9 +399,9 @@ export function CanvasPrototypePage() {
                         const appwriteNoteIds = sceneData
                             .filter((el: any) => el.type === "embeddable" && el.link && el.link.startsWith("note://") && !el.link.startsWith("note://embed-"))
                             .map((el: any) => el.link.replace("note://", ""));
-                        
+
                         const uniqueIds = Array.from(new Set(appwriteNoteIds)) as string[];
-                        
+
                         if (uniqueIds.length > 0) {
                             try {
                                 const titlesRes = await databases.listDocuments(
@@ -284,7 +612,7 @@ export function CanvasPrototypePage() {
 
     const handleChange = (elements: readonly any[], appState: any) => {
         const selectedIds = Object.keys(appState.selectedElementIds).filter(id => appState.selectedElementIds[id]);
-        
+
         let currentExcalidrawId: string | null = null;
         if (selectedIds.length === 1) {
             const el = elements.find((e: any) => e.id === selectedIds[0]);
@@ -319,12 +647,15 @@ export function CanvasPrototypePage() {
             }
         }
 
+        // NOTE: pending mention updates are now handled in the tracking interval (lines 177+).
+
+
         // Canvas Saving Logic
         if (canvasLoading || !canvasId) return;
 
         const activeElements = elements.filter(el => !el.isDeleted);
         const currentSceneString = JSON.stringify(activeElements);
-        
+
         if (currentSceneString !== lastSavedSceneRef.current) {
             lastSavedSceneRef.current = currentSceneString;
             scheduleCanvasSave(currentSceneString);
@@ -402,12 +733,45 @@ export function CanvasPrototypePage() {
         }, 800);
     };
 
+    const closePanel = () => {
+        // 1. Flush Appwrite save if pending
+        if (debounceSaveRef.current && appwriteNoteId) {
+            clearTimeout(debounceSaveRef.current);
+            debounceSaveRef.current = null;
+            
+            // Set synchronous state to show it's saved instantly
+            setSaveStatus("Tersimpan");
+            
+            databases.updateDocument(
+                APPWRITE_CONFIG.databaseId,
+                APPWRITE_CONFIG.collectionId,
+                appwriteNoteId,
+                { title: latestDataRef.current.title, content: latestDataRef.current.content }
+            ).catch(err => {
+                console.error("Flush save error:", err);
+            });
+        }
+        
+        // 2. Clear Excalidraw selection to unselect the card or mention
+        if (excalidrawAPI) {
+            const appState = excalidrawAPI.getAppState();
+            if (Object.keys(appState.selectedElementIds).length > 0) {
+                excalidrawAPI.updateScene({ appState: { selectedElementIds: {} } });
+            }
+        }
+        
+        // 3. Clear refs and states
+        lastExcalidrawSelectedIdRef.current = null;
+        setAppwriteNoteId(null);
+        setSelectedNoteId(null);
+    };
+
     const handleAppwriteTitleChange = (newTitle: string) => {
         if (!appwriteNoteId) return;
         setAppwriteNoteData(prev => prev ? { ...prev, title: newTitle } : null);
         latestDataRef.current.title = newTitle;
         scheduleAppwriteSave(appwriteNoteId);
-        
+
         setAppwriteTitles(prev => ({
             ...prev,
             [appwriteNoteId]: newTitle
@@ -462,6 +826,17 @@ export function CanvasPrototypePage() {
         slashMenuScenePosRef.current = { x: sceneX, y: sceneY };
     };
 
+    // Gather mentions from text elements that have customData.mentions
+    const getMentionsForElement = (elementId: string): { noteId: string; title: string }[] => {
+        if (!excalidrawAPI) return [];
+        const elements = excalidrawAPI.getSceneElements();
+        const el = elements.find((e: any) => e.id === elementId);
+        if (!el) return [];
+        // Only text elements (type === "text") carry mentions
+        if (el.type !== "text") return [];
+        return el.customData?.mentions ?? [];
+    };
+
     console.log("[DIAG] 7 : render panel kanan, appwriteNoteId:", appwriteNoteId, "selectedNoteId:", selectedNoteId, "cabang:", appwriteNoteId ? "Appwrite" : (selectedNoteId ? "Welcome Note" : "None"));
     return (
         <div style={{ display: "flex", width: "100%", height: "calc(100vh - 80px)", overflow: "hidden" }}>
@@ -502,6 +877,28 @@ export function CanvasPrototypePage() {
                             lastPointerSceneRef.current = { x: pointer.x, y: pointer.y };
                             lastPointerScreenRef.current = { x: pointer.x, y: pointer.y };
                         }}
+                        onPointerDown={(_activeTool, pointerDownState) => {
+                            let el = pointerDownState.hit.element;
+                            
+                            if (el && el.boundElements && excalidrawAPI) {
+                                const boundTextBinding = el.boundElements.find((b: any) => b.type === "text");
+                                if (boundTextBinding) {
+                                    const boundTextEl = excalidrawAPI.getSceneElements().find((e: any) => e.id === boundTextBinding.id);
+                                    if (boundTextEl) {
+                                        el = boundTextEl;
+                                    }
+                                }
+                            }
+                            
+                            if (el && el.type === "text" && el.customData?.mentions?.length) {
+                                if (excalidrawAPI?.getAppState().editingTextElement?.id === el.id) return;
+                                
+                                const mention = getMentionClicked(el, pointerDownState.origin.x, pointerDownState.origin.y);
+                                if (mention) {
+                                    pointerDownMentionRef.current = mention;
+                                }
+                            }
+                        }}
                     />
                     </div>
                 )}
@@ -509,7 +906,7 @@ export function CanvasPrototypePage() {
 
             {/* Side Panel Area */}
             {(selectedNoteId || appwriteNoteId) && (
-                <div 
+                <div
                     style={{ flex: "0 0 45%", background: "white", display: "flex", flexDirection: "column" }}
                     onKeyDown={stopKeyboardPropagation}
                     onKeyUp={stopKeyboardPropagation}
@@ -524,14 +921,23 @@ export function CanvasPrototypePage() {
                                     <div style={{ fontSize: "1.2rem", color: "#ef4444", fontWeight: "bold" }}>Note tidak ditemukan</div>
                                 ) : (
                                     <>
-                                        <input 
-                                            type="text" 
+                                        <input
+                                            type="text"
                                             value={appwriteNoteData?.title || ""}
                                             onChange={(e) => handleAppwriteTitleChange(e.target.value)}
                                             placeholder="Note Title"
-                                            style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none" }}
+                                            style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0 }}
                                         />
-                                        <span style={{ fontSize: "0.875rem", color: "#64748b", whiteSpace: "nowrap", marginLeft: 10 }}>{saveStatus}</span>
+                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                            <span style={{ fontSize: "0.875rem", color: "#64748b", whiteSpace: "nowrap" }}>{saveStatus}</span>
+                                            <button 
+                                                onClick={closePanel}
+                                                style={{ background: "transparent", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#64748b", padding: "4px 8px" }}
+                                                title="Tutup Panel"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
                                     </>
                                 )}
                             </div>
@@ -541,7 +947,7 @@ export function CanvasPrototypePage() {
                                 ) : appwriteNoteData === null && saveStatus === "Note tidak ditemukan" ? (
                                     <div style={{ color: "#ef4444" }}>Tidak ada konten untuk ditampilkan.</div>
                                 ) : (
-                                    <Editor 
+                                    <Editor
                                         key={`appwrite-${appwriteNoteId}`}
                                         initialContent={appwriteNoteData?.content || ""}
                                         onChange={(json) => handleAppwriteContentChange(json)}
@@ -553,18 +959,61 @@ export function CanvasPrototypePage() {
                         </>
                     ) : (
                         <>
-                            <div style={{ padding: "20px", borderBottom: "1px solid #e2e8f0" }}>
-                                <input 
-                                    type="text" 
+                            <div style={{ padding: "20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center" }}>
+                                <input
+                                    type="text"
                                     value={selectedNoteId ? (notesData[selectedNoteId]?.title || "") : ""}
                                     onChange={(e) => selectedNoteId && handleTitleChange(selectedNoteId, e.target.value)}
                                     placeholder="Note Title"
-                                    style={{ width: "100%", fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none" }}
+                                    style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0 }}
                                 />
+                                <button 
+                                    onClick={closePanel}
+                                    style={{ background: "transparent", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#64748b", padding: "4px 8px", marginLeft: "10px" }}
+                                    title="Tutup Panel"
+                                >
+                                    ✕
+                                </button>
                             </div>
+
+                            {/* Panel: mentions from the selected text element */}
+                            {false && (() => {
+                                const textMentions = selectedNoteId ? getMentionsForElement(selectedNoteId as string) : [];
+                                if (textMentions.length > 0) {
+                                    return (
+                                        <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0" }}>
+                                            <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600, marginBottom: 8 }}>
+                                                Catatan di teks ini
+                                            </div>
+                                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                                {textMentions.map((m) => (
+                                                    <button
+                                                        key={m.noteId}
+                                                        onClick={() => handleOpenAppwriteNote(m.noteId)}
+                                                        style={{
+                                                            padding: "4px 12px",
+                                                            background: "#eff6ff",
+                                                            color: "#3b82f6",
+                                                            border: "1px solid #bfdbfe",
+                                                            borderRadius: "16px",
+                                                            cursor: "pointer",
+                                                            fontSize: "0.875rem",
+                                                            fontWeight: 500,
+                                                        }}
+                                                    >
+                                                        📝 {m.title}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                                return null;
+                            })()}
+
                             <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
                                 {selectedNoteId && (
-                                    <Editor 
+                                    <Editor
                                         key={`canvas-${selectedNoteId}`}
                                         initialContent={notesData[selectedNoteId]?.content || ""}
                                         onChange={(json) => handleContentChange(selectedNoteId, json)}
@@ -587,6 +1036,64 @@ export function CanvasPrototypePage() {
                         setAppwriteTitles(prev => ({ ...prev, [id]: title }));
                     }}
                     onClose={() => setSlashMenuOpen(false)}
+                />
+            )}
+
+            {mentionMenuOpen && mentionMenuTextarea && (
+                <SlashMenu
+                    ref={slashMenuRef}
+                    mode="mention"
+                    mentionQuery={mentionQuery}
+                    position={mentionMenuPosition}
+                    onNoteCreated={(id, title) => {
+                        setAppwriteTitles(prev => ({ ...prev, [id]: title }));
+                    }}
+                    onNoteSelected={(noteId, title) => {
+                        console.log("[DIAG-M] Item dipilih. Textarea ada:", !!document.querySelector(".excalidraw-wysiwyg"), "document.activeElement:", document.activeElement?.tagName, document.activeElement?.className, "editingTextElement:", excalidrawAPI?.getAppState()?.editingTextElement?.id);
+                        const elementId = editingTextElementIdRef.current;
+                        const textarea = mentionMenuTextarea;
+                        
+                        if (textarea) {
+                            console.log("[DIAG-F] Computed fontFamily saat note dipilih:", getComputedStyle(textarea).fontFamily);
+                        }
+                        
+                        const selStart = textarea.selectionStart;
+                        const val = textarea.value;
+                        const startIndex = mentionStartIndexRef.current;
+                        
+                        if (startIndex !== -1 && val[startIndex] === "@") {
+                            const newVal = val.slice(0, startIndex) + title + val.slice(selStart);
+                            const newCursorPos = startIndex + title.length;
+                            
+                            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+                            nativeInputValueSetter?.call(textarea, newVal);
+                            
+                            textarea.dispatchEvent(new Event("input", { bubbles: true }));
+                            textarea.setSelectionRange(newCursorPos, newCursorPos);
+                        }
+
+                        if (elementId) {
+                            const existing = mentionEditsRef.current.find(e => e.elementId === elementId);
+                            if (existing) {
+                                if (!existing.mentions.some(m => m.noteId === noteId)) {
+                                    existing.mentions.push({ noteId, title });
+                                }
+                            } else {
+                                mentionEditsRef.current.push({ elementId, mentions: [{ noteId, title }] });
+                            }
+                            console.log("[DIAG-C] Note terpilih. Tersimpan di mentionEditsRef untuk elementId:", elementId);
+                        }
+                        
+                        setMentionMenuOpen(false);
+                        setMentionMenuTextarea(null);
+                        
+                        textarea.focus();
+                    }}
+                    onClose={() => {
+                        setMentionMenuOpen(false);
+                        setMentionMenuTextarea(null);
+                        mentionMenuTextarea.focus();
+                    }}
                 />
             )}
         </div>

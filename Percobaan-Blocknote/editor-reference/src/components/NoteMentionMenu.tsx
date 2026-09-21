@@ -1,48 +1,40 @@
-import { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import { useState, useEffect, useRef } from "react";
 import { databases, APPWRITE_CONFIG, ID } from "../lib/appwrite";
 import { Query } from "appwrite";
 
-interface SlashMenuProps {
-    position: { x: number; y: number };
-    initialScenePosition?: { x: number; y: number };
-    excalidrawAPI?: any;
-    mode?: "slash" | "mention";
-    mentionQuery?: string;
+interface NoteMentionMenuProps {
+    textarea: HTMLTextAreaElement;
+    editingElementId: string | null;
+    onNoteSelected: (noteId: string, title: string, elementId: string) => void;
     onNoteCreated: (id: string, title: string) => void;
-    onNoteSelected?: (id: string, title: string) => void;
     onClose: () => void;
 }
 
-export interface SlashMenuRef {
-    handleKeyDown: (e: KeyboardEvent) => void;
-}
-
-interface NoteItem {
+interface MentionItem {
     id: string;
     title: string;
     isCreateNew?: boolean;
     onSelect: () => void;
 }
 
-export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, initialScenePosition, excalidrawAPI, mode = "slash", mentionQuery, onNoteCreated, onNoteSelected, onClose }, ref) => {
+export function NoteMentionMenu({ textarea, editingElementId, onNoteSelected, onNoteCreated, onClose }: NoteMentionMenuProps) {
     const [query, setQuery] = useState("");
-    const [items, setItems] = useState<NoteItem[]>([]);
+    const [items, setItems] = useState<MentionItem[]>([]);
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const debounceRef = useRef<any>(null);
 
-    useEffect(() => {
-        if (mode === "slash") {
-            inputRef.current?.focus();
-        }
-    }, [mode]);
+    const getMenuPosition = () => {
+        const { top, left, height } = textarea.getBoundingClientRect();
+        return { x: left, y: top + height + 4 };
+    };
+
+    const [menuPos] = useState(getMenuPosition);
 
     useEffect(() => {
-        if (mode === "mention" && mentionQuery !== undefined) {
-            setQuery(mentionQuery);
-        }
-    }, [mentionQuery, mode]);
+        inputRef.current?.focus();
+    }, []);
 
     useEffect(() => {
         if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -63,10 +55,10 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                     d => d.title.toLowerCase() === query.toLowerCase()
                 );
 
-                const noteItems: NoteItem[] = response.documents.map(doc => ({
+                const noteItems: MentionItem[] = response.documents.map(doc => ({
                     id: doc.$id,
                     title: doc.title,
-                    onSelect: () => insertNoteBox(doc.$id, doc.title, false),
+                    onSelect: () => selectNote(doc.$id, doc.title, false),
                 }));
 
                 if (query.trim() !== "" && !exactMatch) {
@@ -74,7 +66,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                         id: "__create__",
                         title: `Buat note baru: ${query}`,
                         isCreateNew: true,
-                        onSelect: () => createAndInsertNote(query),
+                        onSelect: () => createAndSelect(query),
                     });
                 }
 
@@ -92,56 +84,50 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
         selectedEl?.scrollIntoView({ block: "nearest" });
     }, [selectedIndex]);
 
-    const insertNoteBox = (noteId: string, title: string, isNew: boolean) => {
-        if (mode === "mention") {
-            if (isNew) {
-                onNoteCreated(noteId, title);
+    const selectNote = (noteId: string, title: string, isNew: boolean) => {
+        const textarea2 = textarea;
+        const value = textarea2.value;
+        const selStart = textarea2.selectionStart;
+
+        // Find the "@" before the cursor
+        let atPos = -1;
+        for (let i = selStart - 1; i >= 0; i--) {
+            if (value[i] === "@") {
+                atPos = i;
+                break;
             }
-            if (onNoteSelected) {
-                onNoteSelected(noteId, title);
-            }
-            onClose();
+            if (/\s/.test(value[i])) break;
+        }
+
+        if (atPos === -1) {
             return;
         }
 
-        const newId = `box-${Date.now()}`;
-        const newEmbeddable = {
-            type: "embeddable" as const,
-            version: 1,
-            versionNonce: Date.now(),
-            isDeleted: false,
-            id: newId,
-            fillStyle: "hachure" as const,
-            strokeWidth: 1,
-            strokeStyle: "solid" as const,
-            roughness: 1,
-            opacity: 100,
-            angle: 0,
-            x: initialScenePosition?.x ?? 0,
-            y: initialScenePosition?.y ?? 0,
-            strokeColor: "#000000",
-            backgroundColor: "transparent",
-            width: 220,
-            height: 90,
-            seed: Date.now(),
-            groupIds: [],
-            frameId: null,
-            roundness: null,
-            boundElements: [],
-            updated: 1,
-            link: `note://${noteId}`,
-            locked: false,
-        };
-        excalidrawAPI?.updateScene({
-            elements: [...excalidrawAPI.getSceneElements(), newEmbeddable],
-        });
+        const before = value.substring(0, atPos);
+        const after = value.substring(selStart);
+        const newValue = before + title + " " + after;
+
+        // Set value using native setter and fire input event
+        const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+            window.HTMLTextAreaElement.prototype,
+            "value"
+        )!.set!;
+        nativeInputValueSetter.call(textarea2, newValue);
+        textarea2.dispatchEvent(new Event("input", { bubbles: true }));
+
+        // Move cursor after inserted title
+        const newCursorPos = atPos + title.length + 1;
+        textarea2.setSelectionRange(newCursorPos, newCursorPos);
+        textarea2.focus();
+
         if (isNew) {
             onNoteCreated(noteId, title);
         }
-        onClose();
+
+        onNoteSelected(noteId, title, editingElementId ?? "");
     };
 
-    const createAndInsertNote = async (title: string) => {
+    const createAndSelect = async (title: string) => {
         const finalTitle = title.trim() || "(Tanpa judul)";
         try {
             const newDoc = await databases.createDocument(
@@ -155,17 +141,16 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                 }
             );
             onNoteCreated(newDoc.$id, finalTitle);
-            insertNoteBox(newDoc.$id, finalTitle, true);
+            // Only call selectNote once, after the document is created
+            selectNote(newDoc.$id, finalTitle, true);
         } catch (e) {
-            console.error("Gagal membuat dokumen Appwrite untuk kotak baru:", e);
+            console.error("Gagal membuat note mention:", e);
         }
     };
 
-    const handleKeyDown = (e: React.KeyboardEvent | KeyboardEvent) => {
+    const handleKeyDown = (e: React.KeyboardEvent) => {
         e.stopPropagation();
-        if ('nativeEvent' in e) {
-            e.nativeEvent.stopImmediatePropagation();
-        }
+        e.nativeEvent.stopImmediatePropagation();
 
         if (e.key === "ArrowDown") {
             e.preventDefault();
@@ -183,15 +168,9 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
         }
     };
 
-    useImperativeHandle(ref, () => ({
-        handleKeyDown: (e: KeyboardEvent) => {
-            handleKeyDown(e);
-        }
-    }));
-
     const handleClickOutside = (e: MouseEvent) => {
         const target = e.target as HTMLElement;
-        if (!target.closest(".slash-menu")) {
+        if (!target.closest(".note-mention-menu")) {
             onClose();
         }
     };
@@ -203,11 +182,11 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
 
     return (
         <div
-            className="slash-menu"
+            className="note-mention-menu"
             style={{
                 position: "fixed",
-                left: position.x,
-                top: position.y,
+                left: menuPos.x,
+                top: menuPos.y,
                 zIndex: 9999,
                 background: "white",
                 border: "1px solid #e2e8f0",
@@ -227,15 +206,13 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                     type="text"
                     value={query}
                     onChange={e => setQuery(e.target.value)}
-                    placeholder={mode === "mention" ? "Cari note..." : "Cari atau buat note..."}
-                    readOnly={mode === "mention"}
+                    placeholder="Cari atau buat note..."
                     style={{
                         width: "100%",
                         border: "none",
                         outline: "none",
                         fontSize: "0.95rem",
                         background: "transparent",
-                        color: mode === "mention" ? "#64748b" : "inherit"
                     }}
                     onKeyDown={handleKeyDown}
                 />
@@ -254,10 +231,7 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
                 {items.map((item, idx) => (
                     <div
                         key={item.id}
-                        onMouseDown={(e) => {
-                            e.preventDefault(); // Prevents focus loss from textarea
-                            item.onSelect();
-                        }}
+                        onClick={() => item.onSelect()}
                         style={{
                             padding: "10px 12px",
                             cursor: "pointer",
@@ -278,4 +252,4 @@ export const SlashMenu = forwardRef<SlashMenuRef, SlashMenuProps>(({ position, i
             </div>
         </div>
     );
-});
+}
