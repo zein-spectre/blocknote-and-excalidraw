@@ -3,3 +3,19 @@
 body {
   @apply bg-gray-50 text-gray-900;
 }
+
+.resizable-panel {
+  container-type: inline-size;
+}
+
+/* Mengurangi margin/padding default BlockNote (54px) di panel sempit */
+.resizable-panel .bn-editor {
+  padding-inline-start: 36px !important;
+  padding-inline-end: 16px !important;
+}
+
+@container (max-width: 380px) {
+  .resizable-panel .bn-editor {
+    padding-inline-start: 28px !important;
+  }
+}

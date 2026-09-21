@@ -5,7 +5,7 @@ import "@excalidraw/excalidraw/index.css";
 import { Editor } from "../components/Editor";
 import { databases, APPWRITE_CONFIG } from "../lib/appwrite";
 import { Query } from "appwrite";
-import { X } from "lucide-react";
+import { ResizablePanel } from "../components/ResizablePanel";
 
 export function CanvasViewPage() {
     const { id: routeId } = useParams<{ id: string }>();
@@ -418,7 +418,7 @@ export function CanvasViewPage() {
                         ref={excalidrawWrapperRef}
                         onPointerDownCapture={handleWrapperPointerDown}
                         onPointerUpCapture={handleWrapperPointerUp}
-                        style={{ flex: (selectedNoteId || appwriteNoteId) ? "1 1 55%" : "1 1 100%", position: "relative", transition: "all 0.3s ease", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}
+                        style={{ flex: 1, position: "relative", minWidth: 0, transition: "none", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}
                     >
                         <Excalidraw
                             excalidrawAPI={(api) => setExcalidrawAPI(api)}
@@ -436,54 +436,43 @@ export function CanvasViewPage() {
 
                 {/* Panel Kanan */}
                 {(selectedNoteId || appwriteNoteId) && (
-                    <div style={{ flex: "1 1 45%", minWidth: "400px", maxWidth: "800px", height: "100%", overflowY: "auto", backgroundColor: "#fff", display: "flex", flexDirection: "column" }}>
-                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 24px", borderBottom: "1px solid #e2e8f0", backgroundColor: "#f8fafc" }}>
-                            <div style={{ flex: 1 }}>
-                                {appwriteNoteId && appwriteLoading ? (
-                                    <span style={{ color: "#64748b" }}>Memuat note...</span>
-                                ) : appwriteNoteId && noteError ? (
-                                    <span style={{ color: "#ef4444", fontWeight: 500 }}>Error</span>
-                                ) : (
-                                    <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 600, color: "#0f172a" }}>
-                                        {appwriteNoteId && appwriteNoteData ? appwriteNoteData.title || "(Tanpa judul)" : "(Note Canvas Internal)"}
-                                    </h2>
-                                )}
-                            </div>
-                            <button
-                                onClick={closePanel}
-                                style={{ padding: "8px", color: "#64748b", background: "transparent", border: "none", cursor: "pointer", borderRadius: "8px" }}
-                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = "#e2e8f0"}
-                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = "transparent"}
-                            >
-                                <X size={20} />
-                            </button>
-                        </div>
-                        
-                        <div style={{ flex: 1, padding: "24px", overflowY: "auto" }}>
-                            {appwriteNoteId ? (
-                                appwriteLoading ? (
-                                    <div style={{ color: "#64748b" }}>Memuat isi...</div>
-                                ) : noteError ? (
-                                    <div style={{ color: "#ef4444", backgroundColor: "#fee2e2", padding: "12px", borderRadius: "8px" }}>
-                                        {noteError}
-                                    </div>
-                                ) : appwriteNoteData ? (
-                                    <div className="prose max-w-none">
-                                        <Editor 
-                                            initialContent={appwriteNoteData.content} 
-                                            editable={false}
-                                            enableMentions={true}
-                                            onOpenNote={handleOpenAppwriteNote}
-                                        />
-                                    </div>
-                                ) : null
+                    <ResizablePanel
+                        onClose={closePanel}
+                        title={
+                            appwriteNoteId && appwriteLoading ? (
+                                <span style={{ color: "#64748b" }}>Memuat note...</span>
+                            ) : appwriteNoteId && noteError ? (
+                                <span style={{ color: "#ef4444", fontWeight: 500 }}>Error</span>
                             ) : (
-                                <div style={{ color: "#64748b" }}>
-                                    Memori Note Canvas Internal.
+                                <h2 style={{ margin: 0, fontSize: "1.25rem", fontWeight: 600, color: "#0f172a", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {appwriteNoteId && appwriteNoteData ? appwriteNoteData.title || "(Tanpa judul)" : "(Note Canvas Internal)"}
+                                </h2>
+                            )
+                        }
+                    >
+                        {appwriteNoteId ? (
+                            appwriteLoading ? (
+                                <div style={{ color: "#64748b" }}>Memuat isi...</div>
+                            ) : noteError ? (
+                                <div style={{ color: "#ef4444", backgroundColor: "#fee2e2", padding: "12px", borderRadius: "8px" }}>
+                                    {noteError}
                                 </div>
-                            )}
-                        </div>
-                    </div>
+                            ) : appwriteNoteData ? (
+                                <div className="prose max-w-none">
+                                    <Editor 
+                                        initialContent={appwriteNoteData.content} 
+                                        editable={false}
+                                        enableMentions={true}
+                                        onOpenNote={handleOpenAppwriteNote}
+                                    />
+                                </div>
+                            ) : null
+                        ) : (
+                            <div style={{ color: "#64748b" }}>
+                                Memori Note Canvas Internal.
+                            </div>
+                        )}
+                    </ResizablePanel>
                 )}
             </div>
         </div>

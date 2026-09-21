@@ -8,6 +8,7 @@ import { databases, APPWRITE_CONFIG, ID } from "../lib/appwrite";
 import { Query } from "appwrite";
 import { Trash2 } from "lucide-react";
 import blocknoteIcon from "../assets/ikon-blocknote.png";
+import { ResizablePanel } from "../components/ResizablePanel";
 
 const ENABLE_CANVAS_SLASH_MENU = false;
 const ENABLE_REMOVE_MENTION_TEXT = true;
@@ -955,16 +956,6 @@ export function CanvasPrototypePage() {
         slashMenuScenePosRef.current = { x: sceneX, y: sceneY };
     };
 
-    // Gather mentions from text elements that have customData.mentions
-    const getMentionsForElement = (elementId: string): { noteId: string; title: string }[] => {
-        if (!excalidrawAPI) return [];
-        const elements = excalidrawAPI.getSceneElements();
-        const el = elements.find((e: any) => e.id === elementId);
-        if (!el) return [];
-        // Only text elements (type === "text") carry mentions
-        if (el.type !== "text") return [];
-        return el.customData?.mentions ?? [];
-    };
 
     if (canvasError) {
         return (
@@ -1023,7 +1014,7 @@ export function CanvasPrototypePage() {
             </div>
             <div style={{ display: "flex", flex: 1, width: "100%", overflow: "hidden" }}>
             {/* Canvas Area */}
-            <div style={{ flex: (selectedNoteId || appwriteNoteId) ? "1 1 55%" : "1 1 100%", position: "relative", transition: "all 0.3s ease", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}>
+            <div style={{ flex: 1, position: "relative", minWidth: 0, transition: "none", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}>
                 {canvasSaveStatus && (
                     <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 10 }}>
                         <span style={{ fontSize: "0.875rem", color: "#64748b", fontWeight: 500, background: "rgba(255,255,255,0.8)", padding: "6px 12px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
@@ -1104,147 +1095,100 @@ export function CanvasPrototypePage() {
 
             {/* Side Panel Area */}
             {(selectedNoteId || appwriteNoteId) && (
-                <div
-                    style={{ flex: "0 0 45%", background: "white", display: "flex", flexDirection: "column" }}
-                    onKeyDown={stopKeyboardPropagation}
-                    onKeyUp={stopKeyboardPropagation}
-                    onKeyPress={stopKeyboardPropagation}
-                >
-                    {appwriteNoteId ? (
-                        <>
-                            <div style={{ padding: "20px", borderBottom: "1px solid #e2e8f0", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                                {appwriteLoading ? (
-                                    <div style={{ fontSize: "1.5rem", color: "#64748b" }}>Memuat...</div>
-                                ) : appwriteNoteData === null && saveStatus === "Note tidak ditemukan" ? (
-                                    <div style={{ fontSize: "1.2rem", color: "#ef4444", fontWeight: "bold" }}>Note tidak ditemukan</div>
-                                ) : (
-                                    <>
-                                        <input
-                                            type="text"
-                                            value={appwriteNoteData?.title || ""}
-                                            onChange={(e) => handleAppwriteTitleChange(e.target.value)}
-                                            placeholder="Note Title"
-                                            style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0 }}
-                                        />
-                                        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                                            <span style={{ fontSize: "0.875rem", color: "#64748b", whiteSpace: "nowrap" }}>{saveStatus}</span>
-                                            {appwriteNoteData?.status !== "trashed" && (
-                                                <button 
-                                                    onClick={moveToTrash}
-                                                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "#ef4444", padding: "4px 8px", display: "flex", alignItems: "center" }}
-                                                    title="Pindahkan ke Tong Sampah"
-                                                >
-                                                    <Trash2 size={18} />
-                                                </button>
-                                            )}
-                                            <button 
-                                                onClick={closePanel}
-                                                style={{ background: "transparent", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#64748b", padding: "4px 8px" }}
-                                                title="Tutup Panel"
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                            {appwriteNoteData?.status === "trashed" && (
-                                <div style={{ background: "#fef3c7", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid #fde68a" }}>
-                                    <span style={{ color: "#b45309", fontWeight: 500 }}>Note ini ada di Tong Sampah</span>
-                                    <button 
-                                        onClick={async () => {
-                                            try {
-                                                await databases.updateDocument(
-                                                    APPWRITE_CONFIG.databaseId,
-                                                    APPWRITE_CONFIG.collectionId,
-                                                    appwriteNoteId,
-                                                    { status: "draft" }
-                                                );
-                                                setAppwriteNoteData(prev => prev ? { ...prev, status: "draft" } : prev);
-                                            } catch (error) {
-                                                console.error("Gagal memulihkan note:", error);
-                                            }
-                                        }}
-                                        style={{ background: "#b45309", color: "white", border: "none", padding: "4px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "0.875rem", fontWeight: 500 }}
-                                    >
-                                        Pulihkan
-                                    </button>
-                                </div>
-                            )}
-                            <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
-                                {appwriteLoading ? (
-                                    <div style={{ color: "#64748b" }}>Memuat konten...</div>
-                                ) : appwriteNoteData === null && saveStatus === "Note tidak ditemukan" ? (
-                                    <div style={{ color: "#ef4444" }}>Tidak ada konten untuk ditampilkan.</div>
-                                ) : (
-                                    <Editor
-                                        key={`appwrite-${appwriteNoteId}`}
-                                        initialContent={appwriteNoteData?.content || ""}
-                                        onChange={(json) => {
-                                            if (appwriteNoteData?.status === "trashed") return;
-                                            handleAppwriteContentChange(json);
-                                        }}
-                                        enableMentions={true}
-                                        onOpenNote={handleOpenAppwriteNote}
-                                    />
-                                )}
-                            </div>
-                        </>
-                    ) : (
-                        <>
-                            <div style={{ padding: "20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center" }}>
+                <ResizablePanel
+                    onClose={closePanel}
+                    title={
+                        appwriteNoteId ? (
+                            appwriteLoading ? (
+                                <div style={{ fontSize: "1.5rem", color: "#64748b" }}>Memuat...</div>
+                            ) : appwriteNoteData === null && saveStatus === "Note tidak ditemukan" ? (
+                                <div style={{ fontSize: "1.2rem", color: "#ef4444", fontWeight: "bold" }}>Note tidak ditemukan</div>
+                            ) : (
                                 <input
                                     type="text"
-                                    value={selectedNoteId ? (notesData[selectedNoteId]?.title || "") : ""}
-                                    onChange={(e) => selectedNoteId && handleTitleChange(selectedNoteId, e.target.value)}
+                                    value={appwriteNoteData?.title || ""}
+                                    onChange={(e) => handleAppwriteTitleChange(e.target.value)}
                                     placeholder="Note Title"
-                                    style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0 }}
+                                    style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0, backgroundColor: "transparent" }}
                                 />
+                            )
+                        ) : (
+                            <input
+                                type="text"
+                                value={selectedNoteId ? (notesData[selectedNoteId]?.title || "") : ""}
+                                onChange={(e) => selectedNoteId && handleTitleChange(selectedNoteId, e.target.value)}
+                                placeholder="Note Title"
+                                style={{ flex: 1, fontSize: "1.5rem", fontWeight: "bold", border: "none", outline: "none", minWidth: 0, backgroundColor: "transparent" }}
+                            />
+                        )
+                    }
+                    headerRight={
+                        appwriteNoteId && appwriteNoteData !== null && appwriteNoteData?.status !== "trashed" ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                                <span style={{ fontSize: "0.875rem", color: "#64748b", whiteSpace: "nowrap" }}>{saveStatus}</span>
                                 <button 
-                                    onClick={closePanel}
-                                    style={{ background: "transparent", border: "none", fontSize: "1.2rem", cursor: "pointer", color: "#64748b", padding: "4px 8px", marginLeft: "10px" }}
-                                    title="Tutup Panel"
+                                    onClick={moveToTrash}
+                                    style={{ background: "transparent", border: "none", cursor: "pointer", color: "#ef4444", padding: "4px 8px", display: "flex", alignItems: "center" }}
+                                    title="Pindahkan ke Tong Sampah"
                                 >
-                                    ✕
+                                    <Trash2 size={18} />
                                 </button>
                             </div>
-
-                            {/* Panel: mentions from the selected text element */}
-                            {false && (() => {
-                                const textMentions = selectedNoteId ? getMentionsForElement(selectedNoteId as string) : [];
-                                if (textMentions.length > 0) {
-                                    return (
-                                        <div style={{ padding: "12px 20px", borderBottom: "1px solid #e2e8f0" }}>
-                                            <div style={{ fontSize: "0.75rem", color: "#64748b", textTransform: "uppercase", fontWeight: 600, marginBottom: 8 }}>
-                                                Catatan di teks ini
-                                            </div>
-                                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                                                {textMentions.map((m) => (
-                                                    <button
-                                                        key={m.noteId}
-                                                        onClick={() => handleOpenAppwriteNote(m.noteId)}
-                                                        style={{
-                                                            padding: "4px 12px",
-                                                            background: "#eff6ff",
-                                                            color: "#3b82f6",
-                                                            border: "1px solid #bfdbfe",
-                                                            borderRadius: "16px",
-                                                            cursor: "pointer",
-                                                            fontSize: "0.875rem",
-                                                            fontWeight: 500,
-                                                        }}
-                                                    >
-                                                        📝 {m.title}
-                                                    </button>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    );
-                                }
-                                return null;
-                            })()}
-
-                            <div style={{ flex: 1, overflow: "auto", padding: "20px" }}>
+                        ) : null
+                    }
+                >
+                    <div
+                        style={{ display: "flex", flexDirection: "column", height: "100%" }}
+                        onKeyDown={stopKeyboardPropagation}
+                        onKeyUp={stopKeyboardPropagation}
+                        onKeyPress={stopKeyboardPropagation}
+                    >
+                        {appwriteNoteId ? (
+                            <>
+                                {appwriteNoteData?.status === "trashed" && (
+                                    <div style={{ background: "#fef3c7", padding: "12px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderRadius: "8px", marginBottom: "16px", borderBottom: "1px solid #fde68a" }}>
+                                        <span style={{ color: "#b45309", fontWeight: 500 }}>Note ini ada di Tong Sampah</span>
+                                        <button 
+                                            onClick={async () => {
+                                                try {
+                                                    await databases.updateDocument(
+                                                        APPWRITE_CONFIG.databaseId,
+                                                        APPWRITE_CONFIG.collectionId,
+                                                        appwriteNoteId,
+                                                        { status: "draft" }
+                                                    );
+                                                    setAppwriteNoteData(prev => prev ? { ...prev, status: "draft" } : prev);
+                                                } catch (error) {
+                                                    console.error("Gagal memulihkan note:", error);
+                                                }
+                                            }}
+                                            style={{ background: "#b45309", color: "white", border: "none", padding: "4px 12px", borderRadius: "6px", cursor: "pointer", fontSize: "0.875rem", fontWeight: 500 }}
+                                        >
+                                            Pulihkan
+                                        </button>
+                                    </div>
+                                )}
+                                <div style={{ flex: 1, overflow: "auto" }}>
+                                    {appwriteLoading ? (
+                                        <div style={{ color: "#64748b" }}>Memuat konten...</div>
+                                    ) : appwriteNoteData === null && saveStatus === "Note tidak ditemukan" ? (
+                                        <div style={{ color: "#ef4444" }}>Tidak ada konten untuk ditampilkan.</div>
+                                    ) : (
+                                        <Editor
+                                            key={`appwrite-${appwriteNoteId}`}
+                                            initialContent={appwriteNoteData?.content || ""}
+                                            onChange={(json) => {
+                                                if (appwriteNoteData?.status === "trashed") return;
+                                                handleAppwriteContentChange(json);
+                                            }}
+                                            enableMentions={true}
+                                            onOpenNote={handleOpenAppwriteNote}
+                                        />
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <div style={{ flex: 1, overflow: "auto" }}>
                                 {selectedNoteId && (
                                     <Editor
                                         key={`canvas-${selectedNoteId}`}
@@ -1255,9 +1199,9 @@ export function CanvasPrototypePage() {
                                     />
                                 )}
                             </div>
-                        </>
-                    )}
-                </div>
+                        )}
+                    </div>
+                </ResizablePanel>
             )}
 
             {slashMenuOpen && (
