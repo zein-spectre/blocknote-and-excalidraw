@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { useParams, Link } from "react-router-dom";
 import { Excalidraw, mutateElement, restoreElements, CaptureUpdateAction } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
@@ -12,6 +12,11 @@ import { ResizablePanel } from "../components/ResizablePanel";
 
 const ENABLE_CANVAS_SLASH_MENU = false;
 const ENABLE_REMOVE_MENTION_TEXT = true;
+
+// ── Pure helpers (tidak bergantung state/hook) ─────────────────────────────────
+const computeFingerprint = (els: readonly any[]): string => {
+    return els.map(el => `${el.id}:${el.version}:${el.isDeleted ? 1 : 0}`).join("|");
+};
 
 export function CanvasPrototypePage() {
     const { id: routeId } = useParams<{ id: string }>();
@@ -30,8 +35,10 @@ export function CanvasPrototypePage() {
     const [canvasTitle, setCanvasTitle] = useState<string>("");
     const [canvasStatus, setCanvasStatus] = useState<string>("");
     const [canvasInitialElements, setCanvasInitialElements] = useState<any[]>([]);
+    const [canvasInitialFiles, setCanvasInitialFiles] = useState<Record<string, any>>({});
     const [canvasSaveStatus, setCanvasSaveStatus] = useState<string>("");
     const [canvasError, setCanvasError] = useState<string | null>(null);
+    const [canvasSaveTooLarge, setCanvasSaveTooLarge] = useState(false);
 
     const latestDataRef = useRef<{ title: string; content: string }>({ title: "", content: "" });
     const debounceSaveRef = useRef<any>(null);
@@ -40,6 +47,14 @@ export function CanvasPrototypePage() {
     const debounceCanvasSaveRef = useRef<any>(null);
     const debounceCanvasTitleSaveRef = useRef<any>(null);
     const lastSavedSceneRef = useRef<string>("");
+    const currentFilesRef = useRef<Record<string, any>>({});
+    const canvasLoadFailedRef = useRef(false);
+    const serverHadElementsRef = useRef(false);
+    // Fingerprint elemen saat muat selesai — untuk bedakan onChange awal dari perubahan user
+    const initialSceneFingerprintRef = useRef<string>("");
+    // Konfirmasi "kanvas kosong" hanya muncul sekali per sesi penyimpanan
+    const emptySceneConfirmPendingRef = useRef(false);
+    const hasUserChangedRef = useRef(false);
 
     // Data disimpan di memori
     const [notesData, setNotesData] = useState<Record<string, { title: string; content: string }>>({
@@ -385,13 +400,14 @@ export function CanvasPrototypePage() {
     }, [excalidrawAPI, mentionMenuOpen]);    useEffect(() => {
         const loadCanvas = async () => {
             if (!routeId) return;
+            console.log("[DIAG] loadCanvas mulai");
             try {
                 const doc = await databases.getDocument(
                     APPWRITE_CONFIG.databaseId,
                     "canvases",
                     routeId
                 );
-                
+
                 if (doc.status === "trashed") {
                     setCanvasError("Kanvas ini ada di Tong Sampah");
                     setCanvasLoading(false);
@@ -401,11 +417,22 @@ export function CanvasPrototypePage() {
                 setCanvasId(doc.$id);
                 setCanvasTitle(doc.title || "(Tanpa judul)");
                 setCanvasStatus(doc.status || "draft");
-                
+
                 try {
-                    const sceneData = JSON.parse(doc.scene || "[]");
+                    const raw = JSON.parse(doc.scene || "[]");
+                    // Format baru: { elements, files } | Format lama: [elements]
+                    const sceneData = Array.isArray(raw) ? raw : (raw.elements || []);
+                    const sceneFiles: Record<string, any> = (raw as any).files || {};
+                    // Hitung elemen AKTIF (bukan isDeleted) untuk serverHadElementsRef — untuk KEDUA format
+                    const activeSceneElements = sceneData.filter((el: any) => !el.isDeleted);
+                    currentFilesRef.current = sceneFiles;
                     setCanvasInitialElements(sceneData);
-                    lastSavedSceneRef.current = JSON.stringify(sceneData);
+                    setCanvasInitialFiles(sceneFiles);
+                    lastSavedSceneRef.current = JSON.stringify({ elements: sceneData, files: sceneFiles });
+                    serverHadElementsRef.current = activeSceneElements.length > 0;
+                    // Simpan fingerprint elemen saat muat — untuk bedakan onChange awal vs perubahan user
+                    initialSceneFingerprintRef.current = computeFingerprint(sceneData);
+                    console.log("[DIAG] loadCanvas selesai — elements:", sceneData.length, "active:", activeSceneElements.length, "files:", Object.keys(sceneFiles).length, "serverHadElements:", activeSceneElements.length > 0, "fingerprint:", initialSceneFingerprintRef.current.slice(0, 40));
 
                     const appwriteNoteIds = sceneData
                         .filter((el: any) => el.type === "embeddable" && el.link && el.link.startsWith("note://") && !el.link.startsWith("note://embed-"))
@@ -431,10 +458,13 @@ export function CanvasPrototypePage() {
                     }
                 } catch (e) {
                     setCanvasInitialElements([]);
+                    setCanvasInitialFiles({});
+                    currentFilesRef.current = {};
                     lastSavedSceneRef.current = "[]";
                 }
             } catch (err: any) {
                 console.error("Failed to load canvas:", err);
+                canvasLoadFailedRef.current = true;
                 if (err.code === 404) {
                     setCanvasError("Kanvas tidak ditemukan");
                 } else {
@@ -442,6 +472,7 @@ export function CanvasPrototypePage() {
                 }
             } finally {
                 setCanvasLoading(false);
+                console.log("[DIAG] useEffect selesai, setCanvasLoading(false)");
             }
         };
         loadCanvas();
@@ -533,7 +564,10 @@ export function CanvasPrototypePage() {
         }
     };
 
-    const handleChange = (elements: readonly any[], appState: any) => {
+    const handleChange = (elements: readonly any[], appState: any, files: any) => {
+        if (files) {
+            currentFilesRef.current = files;
+        }
         const selectedIds = Object.keys(appState.selectedElementIds).filter(id => appState.selectedElementIds[id]);
 
         let currentExcalidrawId: string | null = null;
@@ -572,20 +606,89 @@ export function CanvasPrototypePage() {
 
         // NOTE: pending mention updates are now handled in the tracking interval (lines 177+).
 
+    // ── Helpers & Shared Save Guard ──────────────────────────────────────────
 
-        // Canvas Saving Logic
+    /**
+     * canSaveScene — fungsi pengaman bersama untuk SEMUA jalur yang menulis kolom scene.
+     * (a) muat harus sukses
+     * (b) tolak jika aktif 0 dan serverHadElementsRef true, KECUALI pengguna sudah konfirmasi via confirm
+     * (c) tolak jika belum ada perubahan (fingerprint belum beda dari saat muat)
+     * Returns: string alasan blokir, atau null kalau boleh menyimpan.
+     */
+    const canSaveScene = (activeElements: any[]): string | null => {
+        if (canvasLoadFailedRef.current) return "muat gagal";
+        if (!hasUserChangedRef.current) return "belum ada perubahan";
+        if (activeElements.length === 0 && serverHadElementsRef.current) {
+            if (!emptySceneConfirmPendingRef.current) return "kanvas kosong, menunggu konfirmasi";
+            // pengguna sudah konfirmasi — lanjutkan
+        }
+        return null;
+    };
+
+
+        // Canvas Saving Logic — menggunakan canSaveScene
         if (canvasLoading || !canvasId) return;
 
         const activeElements = elements.filter(el => !el.isDeleted);
-        const currentSceneString = JSON.stringify(activeElements);
+
+        // Bangun fingerprint saat ini
+        const currentFingerprint = computeFingerprint(elements);
+
+        // Bandingkan fingerprint: onChange awal (sama persis dengan hasil muat) tidak dianggap perubahan
+        if (!hasUserChangedRef.current) {
+            if (currentFingerprint !== initialSceneFingerprintRef.current) {
+                hasUserChangedRef.current = true;
+                console.log("[DIAG] perubahan terdeteksi (fingerprint berbeda), aktifkan simpan");
+            }
+        }
+
+        const blokAlasan = canSaveScene(activeElements);
+        if (blokAlasan) {
+            console.log("[DIAG] simpan diblok:", blokAlasan);
+            if (blokAlasan === "kanvas kosong, menunggu konfirmasi") {
+                setCanvasSaveStatus("Kanvas kosong belum disimpan");
+            }
+            return;
+        }
+
+        // Collect fileIds of active image elements
+        const activeFileIds = new Set<string>();
+        for (const el of activeElements) {
+            if ((el as any).type === "image" && (el as any).fileId) {
+                activeFileIds.add((el as any).fileId);
+            }
+        }
+
+        // Filter files to only those used by active images
+        const sceneFiles: Record<string, any> = {};
+        for (const fileId of activeFileIds) {
+            if (currentFilesRef.current[fileId]) {
+                sceneFiles[fileId] = currentFilesRef.current[fileId];
+            }
+        }
+
+        const scenePayload = { elements: activeElements, files: sceneFiles };
+        const currentSceneString = JSON.stringify(scenePayload);
 
         if (currentSceneString !== lastSavedSceneRef.current) {
+            // Reset flag konfirmasi kosong setiap kali fingerprint berubah
+            if (activeElements.length > 0) {
+                emptySceneConfirmPendingRef.current = false;
+            }
             lastSavedSceneRef.current = currentSceneString;
-            scheduleCanvasSave(currentSceneString);
+            scheduleCanvasSave(currentSceneString, activeElements);
         }
     };
 
-    const scheduleCanvasSave = (sceneString: string) => {
+    const scheduleCanvasSave = (sceneString: string, sceneElements: any[]) => {
+        // Size guard: 9 MB limit, Appwrite column limit is 10 MB
+        if (sceneString.length > 9_000_000) {
+            console.warn("[DIAG] Kanvas terlalu besar untuk disimpan (>9 juta karakter)");
+            setCanvasSaveTooLarge(true);
+            setCanvasSaveStatus("Kanvas terlalu besar, kurangi gambar");
+            return;
+        }
+        setCanvasSaveTooLarge(false);
         setCanvasSaveStatus("Kanvas: menyimpan...");
         if (debounceCanvasSaveRef.current) clearTimeout(debounceCanvasSaveRef.current);
         debounceCanvasSaveRef.current = setTimeout(async () => {
@@ -597,6 +700,12 @@ export function CanvasPrototypePage() {
                     canvasId,
                     { scene: sceneString }
                 );
+                // Perbarui fingerprint dan serverHadElementsRef setelah simpan SUKSES
+                initialSceneFingerprintRef.current = computeFingerprint(sceneElements);
+                serverHadElementsRef.current = sceneElements.filter((el: any) => !el.isDeleted).length > 0;
+                hasUserChangedRef.current = false; // reset agar perubahan berikutnya terdeteksi lagi
+                emptySceneConfirmPendingRef.current = false;
+                console.log("[DIAG] simpan sukses — fingerprint diupdate, serverHadElements:", serverHadElementsRef.current);
                 setCanvasSaveStatus("Kanvas: tersimpan");
                 setTimeout(() => setCanvasSaveStatus(prev => prev === "Kanvas: tersimpan" ? "" : prev), 2000);
             } catch (err) {
@@ -653,32 +762,60 @@ export function CanvasPrototypePage() {
 
     const handlePreview = () => {
         if (!canvasId || !excalidrawAPI) return;
-        
+        if (canvasLoading || canvasLoadFailedRef.current) {
+            setCanvasSaveStatus("Kanvas belum selesai dimuat");
+            return;
+        }
+
+        const elements = excalidrawAPI.getSceneElements();
+        const activeElements = elements.filter((el: any) => !el.isDeleted);
+
+        // Collect fileIds of active image elements
+        const activeFileIds = new Set<string>();
+        for (const el of activeElements) {
+            if (el.type === "image" && el.fileId) {
+                activeFileIds.add(el.fileId);
+            }
+        }
+        const sceneFiles: Record<string, any> = {};
+        for (const fileId of activeFileIds) {
+            if (currentFilesRef.current[fileId]) {
+                sceneFiles[fileId] = currentFilesRef.current[fileId];
+            }
+        }
+
+        const scenePayload = { elements: activeElements, files: sceneFiles };
+        const currentSceneString = JSON.stringify(scenePayload);
+
+        // Konfirmasi "kanvas kosong" — hanya sekali per sesi penyimpanan
+        if (activeElements.length === 0 && serverHadElementsRef.current && !emptySceneConfirmPendingRef.current) {
+            if (!window.confirm("Kanvas kosong akan menimpa isi yang tersimpan. Lanjutkan?")) {
+                setCanvasSaveStatus("Kanvas kosong belum disimpan");
+                return;
+            }
+            emptySceneConfirmPendingRef.current = true;
+        }
+
         if (debounceCanvasSaveRef.current) {
             clearTimeout(debounceCanvasSaveRef.current);
             debounceCanvasSaveRef.current = null;
         }
 
-        const elements = excalidrawAPI.getSceneElements();
-        const activeElements = elements.filter((el: any) => !el.isDeleted);
-        const currentSceneString = JSON.stringify(activeElements);
-        lastSavedSceneRef.current = currentSceneString;
+        // Size guard
+        if (currentSceneString.length > 9_000_000) {
+            console.warn("[DIAG] Kanvas terlalu besar untuk disimpan sebelum preview (>9 juta karakter)");
+            setCanvasSaveTooLarge(true);
+            setCanvasSaveStatus("Kanvas terlalu besar, kurangi gambar");
+            return;
+        }
+        setCanvasSaveTooLarge(false);
 
-        setCanvasSaveStatus("Menyimpan sebelum preview...");
-        
-        databases.updateDocument(
-            APPWRITE_CONFIG.databaseId,
-            "canvases",
-            canvasId,
-            { scene: currentSceneString }
-        ).then(() => {
-            setCanvasSaveStatus("Tersimpan");
-            setTimeout(() => setCanvasSaveStatus(prev => prev === "Tersimpan" ? "" : prev), 2000);
-            window.open(`/view/canvas/${canvasId}`, "_blank");
-        }).catch((err) => {
-            console.error("Gagal menyimpan sebelum preview:", err);
-            setCanvasSaveStatus("Gagal menyimpan");
-        });
+        // Pakai scheduleCanvasSave supaya refs di-update setelah simpan
+        lastSavedSceneRef.current = currentSceneString;
+        scheduleCanvasSave(currentSceneString, activeElements);
+
+        // Langsung navigasi setelah simpan dipanggil (scheduleCanvasSave async)
+        window.open(`/view/canvas/${canvasId}`, "_blank");
     };
 
     const handleOpenAppwriteNote = (id: string) => {
@@ -971,6 +1108,16 @@ export function CanvasPrototypePage() {
     }
 
     console.log("[DIAG] 7 : render panel kanan, appwriteNoteId:", appwriteNoteId, "selectedNoteId:", selectedNoteId, "cabang:", appwriteNoteId ? "Appwrite" : (selectedNoteId ? "Welcome Note" : "None"));
+
+    // Stable initialData — created once when elements/files first load, then memoized and stable
+    const excalidrawInitialData = useMemo(
+        () => {
+            console.log("[DIAG] excalidrawInitialData useMemo terpanggil — elements:", canvasInitialElements.length, "files:", Object.keys(canvasInitialFiles).length);
+            return { elements: canvasInitialElements, files: canvasInitialFiles };
+        },
+        [canvasInitialElements, canvasInitialFiles]
+    );
+
     return (
         <div style={{ display: "flex", flexDirection: "column", width: "100%", height: "calc(100vh - 80px)", overflow: "hidden", marginTop: "-24px" }}>
             <div style={{ height: "40px", flexShrink: 0, display: "flex", alignItems: "center", padding: "0 16px", backgroundColor: "#fff", borderBottom: "1px solid #e2e8f0", gap: "16px" }}>
@@ -1015,6 +1162,18 @@ export function CanvasPrototypePage() {
             <div style={{ display: "flex", flex: 1, width: "100%", overflow: "hidden" }}>
             {/* Canvas Area */}
             <div style={{ flex: 1, position: "relative", minWidth: 0, transition: "none", borderRight: (selectedNoteId || appwriteNoteId) ? "1px solid #e2e8f0" : "none" }}>
+                {canvasSaveTooLarge && (
+                    <div style={{
+                        position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)",
+                        zIndex: 20, background: "#fef3c7", color: "#92400e",
+                        padding: "8px 16px", borderRadius: "8px", border: "1px solid #fde68a",
+                        fontSize: "0.875rem", fontWeight: 500,
+                        boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+                        maxWidth: "80%"
+                    }}>
+                        Kanvas terlalu besar, kurangi gambar
+                    </div>
+                )}
                 {canvasSaveStatus && (
                     <div style={{ position: "absolute", bottom: 16, left: 16, zIndex: 10 }}>
                         <span style={{ fontSize: "0.875rem", color: "#64748b", fontWeight: 500, background: "rgba(255,255,255,0.8)", padding: "6px 12px", borderRadius: "8px", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" }}>
@@ -1030,7 +1189,7 @@ export function CanvasPrototypePage() {
                     <div onKeyDown={handleCanvasKeyDown} tabIndex={-1} style={{ height: "100%" }}>
                     <Excalidraw
                         excalidrawAPI={(api) => setExcalidrawAPI(api)}
-                        initialData={{ elements: canvasInitialElements }}
+                        initialData={excalidrawInitialData}
                         renderEmbeddable={renderEmbeddable}
                         validateEmbeddable={() => true}
                         renderTopRightUI={() => (
