@@ -196,6 +196,23 @@ export function CanvasViewPage() {
     };
 
     // Global listeners removed, replaced with capture phase on wrapper
+    useEffect(() => {
+        const handleWindowPointerUp = (e: PointerEvent) => {
+            console.log("[DIAG-G] 1b: window bubble pointerup diterima", e.type);
+            setTimeout(() => {
+                const canvas = document.querySelector(".excalidraw canvas.interactive") as HTMLCanvasElement;
+                if (canvas) {
+                    console.log("[DIAG-G] 1c: style.cursor pada canvas setelah 300ms:", canvas.style.cursor);
+                }
+            }, 300);
+            const canvas = document.querySelector(".excalidraw canvas.interactive") as HTMLCanvasElement;
+            if (canvas) {
+                console.log("[DIAG-G] 1c: style.cursor pada canvas sesaat setelah pointerup:", canvas.style.cursor);
+            }
+        };
+        window.addEventListener("pointerup", handleWindowPointerUp);
+        return () => window.removeEventListener("pointerup", handleWindowPointerUp);
+    }, []);
 
     const renderEmbeddable = (element: any, _appState: any) => {
         console.log("[DIAG-V] 1b: renderEmbeddable dipanggil untuk:", element.link);
@@ -302,11 +319,13 @@ export function CanvasViewPage() {
 
     const handleWrapperPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
         console.log("[DIAG-V] 1c: pointerdown native diterima pembungkus");
+        console.log("[DIAG-G] 1a: pointerdown di handleWrapperPointerDown");
         pointerDownScreenPosRef.current = { x: e.clientX, y: e.clientY };
     };
 
     const handleWrapperPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
         console.log("[DIAG-V] 1c: pointerup native diterima pembungkus");
+        console.log("[DIAG-G] 1a: pointerup di handleWrapperPointerUp");
         if (!pointerDownScreenPosRef.current || !excalidrawAPI) return;
         
         const dx = e.clientX - pointerDownScreenPosRef.current.x;
@@ -331,9 +350,9 @@ export function CanvasViewPage() {
                     if (sceneX >= el.x && sceneX <= el.x + el.width &&
                         sceneY >= el.y && sceneY <= el.y + el.height) {
                         
+                        console.log("[DIAG-G] 1a: mengenai embeddable note, tidak memanggil stopPropagation");
                         const linkId = el.link.replace("note://", "");
                         handleOpenAppwriteNote(linkId);
-                        e.stopPropagation();
                         return;
                     }
                 }
@@ -345,8 +364,8 @@ export function CanvasViewPage() {
                         
                         const mention = getMentionClicked(el, sceneX, sceneY);
                         if (mention) {
+                            console.log("[DIAG-G] 1a: mengenai text mention, tidak memanggil stopPropagation");
                             handleOpenAppwriteNote(mention.noteId);
-                            e.stopPropagation();
                             return;
                         }
                     }
@@ -363,8 +382,8 @@ export function CanvasViewPage() {
                                 
                                 const mention = getMentionClicked(textEl, sceneX, sceneY);
                                 if (mention) {
+                                    console.log("[DIAG-G] 1a: mengenai bound text mention, tidak memanggil stopPropagation");
                                     handleOpenAppwriteNote(mention.noteId);
-                                    e.stopPropagation();
                                     return;
                                 }
                             }
